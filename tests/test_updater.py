@@ -98,7 +98,7 @@ class FetchTests(unittest.TestCase):
             info = check_update(force=True)
         self.assertFalse(info.has_update)
         self.assertIn("OSError", info.error)
-        self.assertEqual(info.current, "0.1.0")
+        self.assertEqual(info.current, updater.__version__)
 
     def test_not_configured(self):
         with mock.patch.object(updater, "_configured", return_value=False):
