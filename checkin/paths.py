@@ -4,9 +4,13 @@
 - **只读资源**（contracts/、web/index.html）：随代码发布。源码时在仓库根，
   打包后由 PyInstaller 内置到 ``sys._MEIPASS`` 解压目录。
 - **可写数据**（config.json、data/、logs/）：运行时生成。优先级：
-  1. 环境变量 ``CHECKIN_HOME``（显式指定，最高）
-  2. exe / 源码根目录（绿色便携，用户看得见）
-  3. 目录不可写时降级到 ``%LOCALAPPDATA%/CreditCheckin``（如 exe 放在 Program Files）
+  1. 环境变量 ``CHECKIN_HOME``（显式指定，最高，测试用）
+  2. **打包后固定用** ``%LOCALAPPDATA%/CreditCheckin``——exe 放在哪都读同一份数据，
+     避免用户移动 exe 后"数据消失"
+  3. 源码运行用仓库根（开发与正式数据隔离）
+
+打包首次启动时若固定目录还没有数据，会自动从 exe 同目录迁移旧版本数据
+（见 :func:`migrate_legacy_data`），避免升级后看起来"数据全丢了"。
 
 所有其它模块都应通过这里取路径，不要再直接用 ``__file__.parents[1]``。
 """
@@ -89,17 +93,53 @@ def data_root() -> Path:
         root.mkdir(parents=True, exist_ok=True)
         return _set_cache(root)
 
-    # exe 所在目录（打包）或仓库根（源码）
+    # 打包后固定用用户目录：exe 放哪都是同一份数据
     if is_frozen():
-        base = Path(sys.executable).resolve().parent
-    else:
-        base = Path(__file__).resolve().parents[1]
+        root = _app_dir_fallback()
+        root.mkdir(parents=True, exist_ok=True)
+        return _set_cache(root)
 
+    # 源码运行：仓库根（开发方便），不可写时降级用户目录
+    base = Path(__file__).resolve().parents[1]
     if _dir_writable(base):
         return _set_cache(base)
     fallback = _app_dir_fallback()
     fallback.mkdir(parents=True, exist_ok=True)
     return _set_cache(fallback)
+
+
+def legacy_data_dirs() -> list[Path]:
+    """旧版本可能存放数据的目录（仅 exe 同目录），用于首次迁移探测。"""
+    if not is_frozen():
+        return []
+    return [Path(sys.executable).resolve().parent]
+
+
+def migrate_legacy_data() -> Optional[Path]:
+    """打包首次启动时，把 exe 同目录的旧数据复制到固定数据目录。
+
+    只复制、不删除原文件（原目录可能只读或用户还想留档）。
+    返回迁移来源目录；无需迁移返回 None。
+    """
+    if not is_frozen():
+        return None
+    import shutil
+    target = data_root()
+    if (target / "config.json").exists():
+        return None
+    for src in legacy_data_dirs():
+        if src == target or not (src / "config.json").is_file():
+            continue
+        try:
+            shutil.copy2(src / "config.json", target / "config.json")
+            for name in ("data", "logs"):
+                sub = src / name
+                if sub.is_dir():
+                    shutil.copytree(sub, target / name, dirs_exist_ok=True)
+        except OSError:
+            continue
+        return src
+    return None
 
 
 def init_data_dirs() -> Path:

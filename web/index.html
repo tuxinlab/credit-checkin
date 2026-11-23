@@ -450,8 +450,8 @@ async function loadVersion(force){
     if(v.has_update){
       chip.textContent='v'+v.current+' → 新版 v'+v.latest;
       chip.classList.add('update');
-      chip.title='发现新版本 '+v.latest+'，点击下载'+(v.notes?'：'+v.notes.split('\n')[0]:'');
-      chip.onclick=()=>window.open(v.download_url||v.release_url,'_blank','noopener');
+      chip.title='点击安装 v'+v.latest+'（面板会自动重启，数据不受影响）';
+      chip.onclick=()=>applyUpdate(v.latest,v.release_url);
     }else{
       chip.textContent='v'+v.current;
       chip.title=v.latest?('已是最新（'+v.latest+'），点击重新检查'):'点击检查更新';
@@ -464,6 +464,46 @@ async function loadVersion(force){
     chip.onclick=()=>loadVersion(true);
   }
 }
+async function applyUpdate(latest,releaseUrl){
+  const ok=confirm(`下载并安装 v${latest}？\n\n· 面板会自动重启，约 5-10 秒\n· 账号配置、凭据、签到记录都在独立数据目录，不受影响\n· 若替换失败会自动还原旧版本\n\n（源码模式不支持，请改用 git pull）`);
+  if(!ok)return;
+  const chip=$('#ver-chip');
+  chip.style.pointerEvents='none';
+  chip.className='ver-chip update';
+  chip.textContent='正在下载 v'+latest+'…';
+  try{
+    const r=await api('/api/update/apply',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    if(!r.ok){
+      toast(r.message||'更新失败');
+      chip.style.pointerEvents='';
+      chip.textContent='v—';
+      chip.onclick=()=>loadVersion(true);
+      return;
+    }
+    chip.textContent='正在重启…';
+  }catch(e){
+    // 面板在响应前退出属正常现象，继续等待其恢复
+    chip.textContent='正在重启…';
+  }
+  waitBackendThenReload();
+}
+
+function waitBackendThenReload(){
+  let tries=0;
+  const timer=setInterval(async()=>{
+    tries++;
+    try{
+      const h=await fetch('/api/health?t='+Date.now(),{cache:'no-store'});
+      if(h.ok){clearInterval(timer);location.reload();return;}
+    }catch(e){}
+    if(tries>=45){
+      clearInterval(timer);
+      toast('面板未在预期时间内恢复，请手动双击 exe 启动');
+      $('#ver-chip').style.pointerEvents='';
+    }
+  },2000);
+}
+
 async function loadContracts(){
   const c=await api('/api/contracts');
   let html=table(['平台','版本','名称','契约版本','状态','步骤数','说明'],c.items.map(x=>`<tr>
@@ -477,7 +517,8 @@ async function loadContracts(){
   $('#config-box').innerHTML=table(['配置项','值'],[
     ['时区',cfg.timezone],['签到窗口',`${cfg.checkin_window.start} ~ ${cfg.checkin_window.end}`],
     ['最大重试',cfg.retry.max_attempts],['历史保留',`${cfg.retention_days} 天`],
-    ['配置文件',cfg.config_path]]);
+    ['数据目录',`<code style="font-size:12px">${esc(cfg.data_dir||'-')}</code>`],
+    ['配置文件',`<code style="font-size:12px">${esc(cfg.config_path||'-')}</code>`]]);
 }
 
 async function loadDrifts(){

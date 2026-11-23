@@ -6,8 +6,13 @@ import json
 import unittest
 from unittest import mock
 
+import tempfile
+from pathlib import Path
+
 from checkin import updater
-from checkin.updater import UpdateInfo, _is_newer, _version_key, check_update, clear_cache
+from checkin.updater import (UpdateInfo, _is_newer, _version_key, apply_update,
+                             build_apply_script, check_update, clear_cache,
+                             download_update)
 
 
 class VersionCompareTests(unittest.TestCase):
@@ -118,6 +123,80 @@ class FetchTests(unittest.TestCase):
             check_update(force=True)
             check_update(force=True)
             self.assertEqual(m.call_count, 2)
+
+
+class ApplyUpdateTests(unittest.TestCase):
+    """一键替换：下载校验、脚本生成、模式判断。"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.tmp = Path(self.tmpdir.name)
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    @staticmethod
+    def _resp(body: bytes):
+        r = mock.MagicMock()
+        r.read.side_effect = [body, b""]
+        r.__enter__ = lambda self: self
+        r.__exit__ = lambda self, *a: None
+        return r
+
+    def _info(self, url: str) -> UpdateInfo:
+        return UpdateInfo(current="0.1.0", latest="9.9.9", has_update=True,
+                          download_url=url)
+
+    def test_rejects_foreign_download_url(self):
+        """下载地址不属于本仓库时必须拒绝，避免更新被劫持。"""
+        with self.assertRaises(RuntimeError):
+            download_update(self._info("https://evil.example/x.exe"), self.tmp)
+
+    def test_rejects_non_pe_content(self):
+        url = f"https://github.com/{updater.GITHUB_REPO}/releases/download/v9.9.9/CreditCheckin.exe"
+        with mock.patch.object(updater.urllib.request, "urlopen",
+                               return_value=self._resp(b"<html>not a program</html>")):
+            with self.assertRaises(RuntimeError):
+                download_update(self._info(url), self.tmp)
+        self.assertFalse((self.tmp / "CreditCheckin.new.exe").exists())
+
+    def test_downloads_valid_pe(self):
+        url = f"https://github.com/{updater.GITHUB_REPO}/releases/download/v9.9.9/CreditCheckin.exe"
+        with mock.patch.object(updater.urllib.request, "urlopen",
+                               return_value=self._resp(b"MZ" + b"\x00" * 512)):
+            out = download_update(self._info(url), self.tmp)
+        self.assertTrue(out.is_file())
+        self.assertEqual(out.read_bytes()[:2], b"MZ")
+
+    def test_apply_script_waits_and_rolls_back(self):
+        """脚本必须：等进程退出、备份、覆盖、失败回滚。"""
+        target = self.tmp / "CreditCheckin.exe"
+        target.write_bytes(b"MZ-old")
+        new = self.tmp / "CreditCheckin.new.exe"
+        new.write_bytes(b"MZ-new")
+        script = build_apply_script(target, new, pid=4321)
+        self.assertTrue(script.is_file())
+        raw = script.read_bytes()
+        # cmd 只认 CRLF：LF-only 会把命令拼成一行而静默失效
+        self.assertIn(b"\r\n", raw)
+        self.assertNotIn(b"\n", raw.replace(b"\r\n", b""))
+        content = raw.decode("mbcs", "replace")
+        # 靠重命名探测文件释放，比查 PID 可靠（bootloader 可能延后释放）
+        self.assertIn(":waitfree", content)
+        self.assertIn(":restore", content)
+        self.assertIn(":giveup", content)
+        self.assertIn("move /y", content)
+        self.assertIn('start "" "%OLD%"', content)
+        # 每行独立（之前 LF 导致 set 与 rem 拼成一行）
+        self.assertNotIn('.bak"if', content)
+
+    def test_apply_update_rejects_source_mode(self):
+        """源码模式不支持自动替换，必须明确告知而不是静默失败。"""
+        from checkin import paths as paths_mod
+        with mock.patch.object(paths_mod, "is_frozen", return_value=False):
+            r = apply_update(self._info("https://x/y.exe"), self.tmp)
+        self.assertFalse(r["ok"])
+        self.assertIn("git pull", r["message"])
 
 
 if __name__ == "__main__":

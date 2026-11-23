@@ -14,9 +14,13 @@ from .cli import main as cli_main
 
 def _exe_main(argv: list[str]) -> int:
     """打包 exe 的入口分流。"""
+    # 老版本把数据放在 exe 同目录；新版固定到用户目录，首次启动先迁移，避免"数据丢失"
+    migrated = paths.migrate_legacy_data()
     # 首次运行静默生成配置（小白不用手敲 init）
     from .cli import ensure_initialized
     ensure_initialized()
+    if migrated:
+        _log_migration(migrated)
 
     if not argv:
         # 双击打开：启动面板
@@ -33,6 +37,19 @@ def _exe_main(argv: list[str]) -> int:
 
     # 高级用户仍可用 CLI，把 exe 当成命令行工具
     return cli_main(argv)
+
+
+def _log_migration(source) -> None:
+    """记录首次数据迁移，方便用户日后确认数据去了哪。"""
+    from datetime import datetime
+    try:
+        log = paths.data_root() / "logs" / "checkin.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(f"[{datetime.now().astimezone().isoformat(timespec='seconds')}] "
+                     f"[INFO] 数据目录迁移：{source} -> {paths.data_root()}（已复制，原文件保留）\n")
+    except OSError:
+        pass
 
 
 def _log_fatal(exc: BaseException) -> None:

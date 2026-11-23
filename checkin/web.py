@@ -133,6 +133,19 @@ def _trend(state: WebState, days: int = 14) -> Dict[str, Any]:
     return {"days": series, "total": total}
 
 
+def _exit_soon(delay: float = 1.2) -> None:
+    """留出发送 HTTP 响应的时间后退出进程，让更新替换脚本接管文件。"""
+    import os
+    import threading
+    import time
+
+    def _do() -> None:
+        time.sleep(delay)
+        os._exit(0)
+
+    threading.Thread(target=_do, daemon=True).start()
+
+
 def _run_overview(state: WebState) -> Dict[str, Any]:
     cfg = state.cfg
     tz = cfg.get("timezone", "Asia/Shanghai")
@@ -368,6 +381,7 @@ class WebHandler(BaseHTTPRequestHandler):
                     "notify": {k: ("<set>" if k == "webhook" and v else v)
                                for k, v in (cfg.get("notify") or {}).items()},
                     "config_path": cfg.get("_config_path"),
+                    "data_dir": str(paths.data_root()),
                 })
                 return
             if path == "/api/accounts":
@@ -537,6 +551,15 @@ class WebHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         try:
+            if path == "/api/update/apply":
+                self._read_json()
+                from .updater import apply_update, check_update
+                info = check_update(force=True)
+                result = apply_update(info, paths.data_root())
+                self._send_json(result)
+                if result.get("ok"):
+                    _exit_soon()  # 响应发完后退出，让替换脚本接管
+                return
             if path == "/api/run":
                 payload = self._read_json()
                 self._send_json(_handle_run(self.state, payload))

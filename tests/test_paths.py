@@ -54,7 +54,8 @@ class FrozenModeTests(unittest.TestCase):
     def test_frozen_resource_from_meipass(self):
         """打包后契约/前端从 sys._MEIPASS 内置目录读取。"""
         with tempfile.TemporaryDirectory() as tmp:
-            fake_exe = Path(tmp) / "CreditCheckin.exe"
+            fake_exe = Path(tmp) / "exe" / "CreditCheckin.exe"
+            fake_exe.parent.mkdir()
             fake_exe.write_bytes(b"")
             with mock.patch.object(paths.sys, "frozen", True, create=True), \
                  mock.patch.object(paths.sys, "_MEIPASS", tmp, create=True), \
@@ -62,8 +63,64 @@ class FrozenModeTests(unittest.TestCase):
                 self.assertTrue(paths.is_frozen())
                 self.assertEqual(paths.contracts_dir(), Path(tmp) / "contracts")
                 self.assertEqual(paths.static_dir(), Path(tmp) / "web")
-                # 数据目录写 exe 同目录
-                self.assertEqual(paths.data_root(), Path(tmp).resolve())
+
+    def test_frozen_data_dir_is_fixed_app_dir(self):
+        """打包后数据目录固定为用户目录，与 exe 所在位置无关。"""
+        with tempfile.TemporaryDirectory() as tmp, \
+             tempfile.TemporaryDirectory() as appdata:
+            fake_exe = Path(tmp) / "CreditCheckin.exe"
+            fake_exe.write_bytes(b"")
+            with mock.patch.object(paths.sys, "frozen", True, create=True), \
+                 mock.patch.object(paths.sys, "_MEIPASS", tmp, create=True), \
+                 mock.patch.object(paths.sys, "executable", str(fake_exe)), \
+                 mock.patch.dict(os.environ, {"LOCALAPPDATA": appdata,
+                                              "CHECKIN_HOME": ""}, clear=False):
+                os.environ.pop("CHECKIN_HOME", None)
+                paths.reset_cache()
+                root = paths.data_root()
+                self.assertEqual(root.name, paths.APP_DIR_NAME)
+                self.assertEqual(root.parent, Path(appdata).resolve())
+                # 不在 exe 目录
+                self.assertNotEqual(root, Path(tmp).resolve())
+
+    def test_migrate_legacy_data(self):
+        """首次启动应把 exe 同目录的旧数据复制到固定目录，且保留原文件。"""
+        with tempfile.TemporaryDirectory() as tmp, \
+             tempfile.TemporaryDirectory() as appdata:
+            fake_exe = Path(tmp) / "CreditCheckin.exe"
+            fake_exe.write_bytes(b"")
+            # 旧数据：exe 同目录
+            (Path(tmp) / "config.json").write_text('{"timezone":"Asia/Shanghai"}', encoding="utf-8")
+            (Path(tmp) / "data").mkdir()
+            (Path(tmp) / "data" / "checkin.db").write_bytes(b"SQLite fake")
+            with mock.patch.object(paths.sys, "frozen", True, create=True), \
+                 mock.patch.object(paths.sys, "_MEIPASS", tmp, create=True), \
+                 mock.patch.object(paths.sys, "executable", str(fake_exe)), \
+                 mock.patch.dict(os.environ, {"LOCALAPPDATA": appdata}, clear=False):
+                os.environ.pop("CHECKIN_HOME", None)
+                paths.reset_cache()
+                source = paths.migrate_legacy_data()
+                self.assertEqual(source, Path(tmp).resolve())
+                target = paths.data_root()
+                self.assertTrue((target / "config.json").is_file())
+                self.assertTrue((target / "data" / "checkin.db").is_file())
+                # 原文件仍在（只复制不删除）
+                self.assertTrue((Path(tmp) / "config.json").is_file())
+
+    def test_migrate_skipped_when_target_has_data(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             tempfile.TemporaryDirectory() as appdata:
+            fake_exe = Path(tmp) / "CreditCheckin.exe"
+            fake_exe.write_bytes(b"")
+            (Path(tmp) / "config.json").write_text("{}", encoding="utf-8")
+            with mock.patch.object(paths.sys, "frozen", True, create=True), \
+                 mock.patch.object(paths.sys, "_MEIPASS", tmp, create=True), \
+                 mock.patch.object(paths.sys, "executable", str(fake_exe)), \
+                 mock.patch.dict(os.environ, {"LOCALAPPDATA": appdata}, clear=False):
+                os.environ.pop("CHECKIN_HOME", None)
+                paths.reset_cache()
+                (paths.data_root() / "config.json").write_text("{}", encoding="utf-8")
+                self.assertIsNone(paths.migrate_legacy_data())
 
     def test_register_task_points_to_exe_when_frozen(self):
         """打包后计划任务应指向 exe + --run，而不是 python -m checkin。"""
