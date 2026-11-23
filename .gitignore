@@ -22,9 +22,11 @@ venv/
 build/
 build_release/
 build_test/
+build_utest/
 dist/
 dist_release/
 dist_test/
+update-test/
 *.spec
 /CreditCheckin.exe
 /CreditCheckin-*.exe
