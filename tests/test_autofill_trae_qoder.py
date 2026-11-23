@@ -1,11 +1,47 @@
 """Trae 与 Qoder 自动凭据获取测试。"""
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from checkin import autofill_qoder, autofill_trae
+from checkin import autofill_qoder, autofill_qoder_local, autofill_trae
+
+
+class QoderVersionIsolationTests(unittest.TestCase):
+    """Qoder 国内版与国际版是两套配置目录，绝不能串用（否则会读到别人的账号）。"""
+
+    def _env(self, tmp):
+        return mock.patch.dict("os.environ", {"APPDATA": tmp, "QODER_AUTH_DIR": ""})
+
+    def test_auth_dirs_split_by_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "com.qodercn.app.stable").mkdir()
+            (Path(tmp) / "com.qoder.app.stable").mkdir()
+            with self._env(tmp):
+                cn = [p.name for p in autofill_qoder_local.auth_dirs("cn")]
+                gl = [p.name for p in autofill_qoder_local.auth_dirs("global")]
+        self.assertEqual(cn, ["com.qodercn.app.stable"])
+        self.assertEqual(gl, ["com.qoder.app.stable"])
+
+    def test_default_version_is_cn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "com.qodercn.app.stable").mkdir()
+            with self._env(tmp):
+                self.assertEqual(len(autofill_qoder_local.auth_dirs()), 1)
+                self.assertEqual(autofill_qoder_local.auth_dirs()[0].name,
+                                 "com.qodercn.app.stable")
+
+    def test_error_message_names_client_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self._env(tmp):
+                cn = autofill_qoder_local.auto_detect("cn")
+                gl = autofill_qoder_local.auto_detect("global")
+        self.assertFalse(cn["ok"])
+        self.assertFalse(gl["ok"])
+        self.assertIn("Qoder CN", cn["error"])
+        self.assertIn("国际版", gl["error"])
 
 
 class TraeAutofillTests(unittest.TestCase):

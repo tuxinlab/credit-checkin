@@ -20,7 +20,10 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-AUTH_GLOB = "com.qodercn.app*"
+# 国内版与国际版是不同的产品，配置目录与账号体系都独立，必须按版本区分读取，
+# 否则国际版会读不到（或误读国内版账号）。
+AUTH_GLOB = "com.qodercn.app*"          # Qoder CN
+AUTH_GLOB_GLOBAL = "com.qoder.app*"     # Qoder 国际版
 AUTH_FILE = "auth.v1.dat"
 LOCAL_STATE = "Local State"
 
@@ -113,21 +116,22 @@ def _gcm_decrypt(key: bytes, nonce: bytes, blob: bytes) -> bytes:
 
 
 # ---------------- 凭据定位与解密 ----------------
-def auth_dirs() -> List[Path]:
+def auth_dirs(version: str = "cn") -> List[Path]:
     override = os.environ.get("QODER_AUTH_DIR", "").strip()
     if override:
         return [Path(override).expanduser()]
     appdata = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+    pattern = AUTH_GLOB_GLOBAL if version == "global" else AUTH_GLOB
     try:
-        roots = sorted(glob.glob(str(appdata / AUTH_GLOB)),
+        roots = sorted(glob.glob(str(appdata / pattern)),
                        key=os.path.getmtime, reverse=True)
     except OSError:
         roots = []
     return [Path(r) for r in roots]
 
 
-def find_auth_dir() -> Optional[Path]:
-    for d in auth_dirs():
+def find_auth_dir(version: str = "cn") -> Optional[Path]:
+    for d in auth_dirs(version):
         if (d / AUTH_FILE).is_file() and (d / LOCAL_STATE).is_file():
             return d
     return None
@@ -166,16 +170,20 @@ def _read_retry(root: Path, attempts: int = 3) -> Dict[str, Any]:
     raise last  # type: ignore[misc]
 
 
-def auto_detect() -> Dict[str, Any]:
-    """返回 {ok, token, refresh_token, user_id, account_name, phone, email, error, detail}。"""
+def auto_detect(version: str = "cn") -> Dict[str, Any]:
+    """返回 {ok, token, refresh_token, user_id, account_name, phone, email, error, detail}。
+
+    version 为 ``cn``（国内版）或 ``global``（国际版），决定读取哪个客户端目录。
+    """
     result = {"ok": False, "token": "", "refresh_token": "", "user_id": "",
               "account_name": "", "phone": "", "email": "", "error": "", "detail": ""}
     if sys.platform != "win32":
         result["error"] = "本地凭据解密目前仅支持 Windows"
         return result
-    root = find_auth_dir()
+    root = find_auth_dir(version)
     if not root:
-        result["error"] = "未找到 Qoder 登录态（请先在 Qoder CN 桌面端登录）"
+        client = "Qoder 国际版" if version == "global" else "Qoder CN"
+        result["error"] = f"未找到 {client} 登录态（请先在桌面端登录）"
         return result
     result["detail"] = str(root)
     try:

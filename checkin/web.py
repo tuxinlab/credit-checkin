@@ -451,7 +451,7 @@ class WebHandler(BaseHTTPRequestHandler):
                     label = "Trae"
                 elif platform == "qoder":
                     from .autofill_qoder_local import auto_detect as qoder_local
-                    result = qoder_local()
+                    result = qoder_local(version)
                     fields = {"uid": result.get("user_id", ""),
                               "account_name": result.get("account_name", ""),
                               "phone": result.get("phone", "")}
