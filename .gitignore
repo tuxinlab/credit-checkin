@@ -21,10 +21,13 @@ venv/
 # PyInstaller 构建产物
 build/
 build_release/
+build_test/
 dist/
 dist_release/
+dist_test/
 *.spec
 /CreditCheckin.exe
+/CreditCheckin-*.exe
 
 # 编辑器 / 系统
 .vscode/
