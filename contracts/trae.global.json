@@ -1,0 +1,162 @@
+{
+  "platform": "trae",
+  "version": "global",
+  "name": "Trae 国际版 · 每日签到（待验证）",
+  "contract_version": "2026-11-17.probe-1",
+  "status": "unsupported",
+  "template": false,
+  "note": "Trae 国际版（trae.ai）没有每日签到 / 领取 Credits 的活动，社区与官方资料均无该入口；此契约仅作占位，请勿启用该版本账号。",
+  "upstream_references": [
+    "crush1994/Trae-AutoCheckin"
+  ],
+  "defaults": {
+    "timeout": 20,
+    "headers": {
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": "Trae",
+      "X-User-Region": "US"
+    }
+  },
+  "auth": {
+    "type": "header",
+    "header": "Authorization",
+    "prefix": "Cloud-IDE-JWT ",
+    "headers": {
+      "Authorization": "Cloud-IDE-JWT ${token}",
+      "x-device-id": "${cred.device_id}"
+    }
+  },
+  "steps": [
+    {
+      "id": "status",
+      "method": "POST",
+      "url": "https://api.trae.com/trae/api/v2/ug/checkin_credits/status",
+      "headers": {},
+      "body": {
+        "req_source": 1
+      },
+      "expected_shape": {
+        "type": "object",
+        "required_paths": [],
+        "field_types": {}
+      }
+    },
+    {
+      "id": "checkin",
+      "method": "POST",
+      "url": "https://api.trae.com/trae/api/v2/ug/checkin_credits/claim",
+      "headers": {},
+      "body": {
+        "req_source": 1
+      },
+      "expected_shape": {
+        "type": "object",
+        "required_paths": [],
+        "field_types": {}
+      }
+    }
+  ],
+  "response": {
+    "json_paths": {
+      "success": [
+        "$.code"
+      ],
+      "already": [
+        "$.checked_in"
+      ],
+      "failed": [
+        "$.code"
+      ],
+      "credits": [
+        "$.data.points"
+      ],
+      "message": [
+        "$.message",
+        "$.msg"
+      ]
+    },
+    "values": {
+      "success": [
+        0
+      ],
+      "already": [
+        true
+      ],
+      "failed": [
+        404,
+        9074,
+        1001,
+        401,
+        403
+      ]
+    },
+    "expected_shape": {
+      "type": "object",
+      "required_paths": [],
+      "field_types": {}
+    },
+    "verdicts": [
+      {
+        "status": "skipped",
+        "steps": [
+          "status"
+        ],
+        "message": "国际版无签到活动（接口 404）",
+        "match": {
+          "$.code": {
+            "equals": [
+              404
+            ]
+          }
+        }
+      },
+      {
+        "status": "already",
+        "steps": [
+          "status"
+        ],
+        "message": "今日已签到",
+        "match": {
+          "$.checked_in": {
+            "equals": [
+              true,
+              1
+            ]
+          }
+        }
+      },
+      {
+        "status": "success",
+        "steps": [
+          "checkin"
+        ],
+        "message": "签到成功",
+        "credits_path": "$.data.points",
+        "match": {
+          "$.code": {
+            "equals": [
+              0
+            ]
+          }
+        }
+      },
+      {
+        "status": "failed",
+        "steps": [
+          "checkin"
+        ],
+        "message": "签到失败",
+        "match": {
+          "$.code": {
+            "exists": true
+          }
+        }
+      }
+    ]
+  },
+  "change_signals": [
+    "国际版是否上线签到活动",
+    "网关 api.trae.com 是否可用"
+  ]
+}

@@ -1,0 +1,191 @@
+{
+  "platform": "trae",
+  "version": "cn",
+  "name": "Trae 国内版 · 每日签到领积分",
+  "contract_version": "2026-11-18.real-7",
+  "status": "active",
+  "template": false,
+  "note": "真实接口，来源于 crush1994/Trae-AutoCheckin。鉴权为 Cloud-IDE-JWT + 设备头；请求体必须带 req_source=1。code: 0 成功 / 9095 已签 / 9074 限流。需设置 TRAE_ACCESS_TOKEN 与设备头（可用 TRAE_EXTRA_HEADERS 注入 JSON），或允许读取本地 storage.json。",
+  "upstream_references": [
+    "crush1994/Trae-AutoCheckin",
+    "luoleiyong/TraeAutoCheckin"
+  ],
+  "defaults": {
+    "timeout": 20,
+    "headers": {
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": "Trae/1.107.1",
+      "X-User-Region": "CN",
+      "x-device-type": "Windows",
+      "x-app-version": "1.107.1"
+    }
+  },
+  "auth": {
+    "type": "header",
+    "header": "Authorization",
+    "prefix": "Cloud-IDE-JWT ",
+    "headers": {
+      "Authorization": "Cloud-IDE-JWT ${token}",
+      "x-device-id": "${cred.device_id}"
+    }
+  },
+  "steps": [
+    {
+      "id": "status",
+      "method": "POST",
+      "url": "https://api.trae.cn/trae/api/v2/ug/checkin_credits/status",
+      "headers": {},
+      "body": {
+        "req_source": 1
+      },
+      "expected_shape": {
+        "type": "object",
+        "required_paths": [],
+        "field_types": {}
+      }
+    },
+    {
+      "id": "checkin",
+      "method": "POST",
+      "url": "https://api.trae.cn/trae/api/v2/ug/checkin_credits/claim",
+      "headers": {},
+      "body": {
+        "req_source": 1
+      },
+      "expected_shape": {
+        "type": "object",
+        "required_paths": [],
+        "field_types": {}
+      }
+    }
+  ],
+  "response": {
+    "json_paths": {
+      "success": [
+        "$.code",
+        "$.data.points"
+      ],
+      "already": [
+        "$.checked_in"
+      ],
+      "failed": [
+        "$.code"
+      ],
+      "credits": [
+        "$.extra_credits",
+        "$.credits"
+      ],
+      "message": [
+        "$.message",
+        "$.msg"
+      ]
+    },
+    "values": {
+      "success": [
+        0
+      ],
+      "already": [
+        true
+      ],
+      "failed": [
+        9074,
+        1001,
+        1002,
+        400,
+        401,
+        403
+      ]
+    },
+    "expected_shape": {
+      "type": "object",
+      "required_paths": [],
+      "field_types": {}
+    },
+    "verdicts": [
+      {
+        "status": "already",
+        "steps": [
+          "status"
+        ],
+        "message": "今日已签到（服务端状态）",
+        "match": {
+          "$.checked_in": {
+            "equals": [
+              true,
+              1
+            ]
+          }
+        }
+      },
+      {
+        "status": "already",
+        "steps": [
+          "checkin"
+        ],
+        "message": "今日已领取（code 9095）",
+        "match": {
+          "$.code": {
+            "equals": [
+              9095
+            ]
+          }
+        }
+      },
+      {
+        "status": "failed",
+        "steps": [
+          "checkin"
+        ],
+        "message": "参与人数过多被限流（9074），请稍后重试",
+        "match": {
+          "$.code": {
+            "equals": [
+              9074
+            ]
+          }
+        }
+      },
+      {
+        "status": "failed",
+        "steps": [
+          "checkin"
+        ],
+        "message": "Trae 凭据失效，尝试自动续期",
+        "match": {
+          "$.code": {
+            "equals": [
+              1001,
+              1002,
+              401,
+              403
+            ]
+          }
+        },
+        "fatal": true,
+        "auth": true
+      },
+      {
+        "status": "success",
+        "steps": [
+          "checkin"
+        ],
+        "message": "签到成功",
+        "credits_path": "$.extra_credits",
+        "match": {
+          "$.code": {
+            "equals": [
+              0
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "change_signals": [
+    "api.trae.cn 域名或 /trae/api/v2/ug/ 路径前缀变更",
+    "code 9095/9074 语义变化；claim 响应为扁平结构（无 data 包裹）",
+    "积分在 extra_credits（本次所得）/ credits（可用额度），did_checked_in 不作为成功依据",
+    "设备头要求变化（缺头会被拒成 9074）"
+  ]
+}

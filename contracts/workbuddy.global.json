@@ -1,0 +1,156 @@
+{
+  "platform": "workbuddy",
+  "version": "global",
+  "name": "WorkBuddy 国际版 · 每日签到（待验证）",
+  "contract_version": "2026-11-17.probe-1",
+  "status": "unsupported",
+  "template": false,
+  "note": "WorkBuddy 国际版没有每日签到 / 领取积分的入口；定价页只写「每日活跃奖励 30 积分/天」，那是按使用自动发放，不需要也无法手动领取。此契约仅作占位，请勿启用该版本账号。",
+  "upstream_references": [
+    "88lin/workbuddy-auto-signin"
+  ],
+  "defaults": {
+    "timeout": 20,
+    "headers": {
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": "WorkBuddy"
+    }
+  },
+  "auth": {
+    "type": "bearer",
+    "header": "Authorization",
+    "prefix": "Bearer ",
+    "headers": {
+      "Authorization": "Bearer ${token}",
+      "X-User-Id": "${cred.uid}",
+      "X-Domain": "${cred.domain}"
+    }
+  },
+  "steps": [
+    {
+      "id": "status",
+      "method": "POST",
+      "url": "${cred.endpoint}/v2/billing/meter/checkin-activity-status",
+      "headers": {},
+      "expected_shape": {
+        "type": "object",
+        "required_paths": [],
+        "field_types": {}
+      }
+    },
+    {
+      "id": "checkin",
+      "method": "POST",
+      "url": "${cred.endpoint}/v2/billing/meter/daily-checkin",
+      "headers": {},
+      "expected_shape": {
+        "type": "object",
+        "required_paths": [],
+        "field_types": {}
+      }
+    }
+  ],
+  "response": {
+    "json_paths": {
+      "success": [
+        "$.credit",
+        "$.data.credit"
+      ],
+      "already": [
+        "$.today_checked_in"
+      ],
+      "failed": [
+        "$.code"
+      ],
+      "credits": [
+        "$.credit",
+        "$.today_credit"
+      ],
+      "message": [
+        "$.msg",
+        "$.message"
+      ]
+    },
+    "values": {
+      "success": [
+        100,
+        200
+      ],
+      "already": [
+        true
+      ],
+      "failed": [
+        404,
+        401,
+        403
+      ]
+    },
+    "expected_shape": {
+      "type": "object",
+      "required_paths": [],
+      "field_types": {}
+    },
+    "verdicts": [
+      {
+        "status": "skipped",
+        "steps": [
+          "status"
+        ],
+        "message": "国际版无签到活动或端点不可用",
+        "match": {
+          "$.code": {
+            "equals": [
+              404
+            ]
+          }
+        }
+      },
+      {
+        "status": "already",
+        "steps": [
+          "status"
+        ],
+        "message": "今日已签到",
+        "match": {
+          "$.today_checked_in": {
+            "equals": [
+              true,
+              1
+            ]
+          }
+        }
+      },
+      {
+        "status": "success",
+        "steps": [
+          "checkin"
+        ],
+        "message": "签到成功",
+        "credits_path": "$.credit",
+        "match": {
+          "$.credit": {
+            "exists": true
+          }
+        }
+      },
+      {
+        "status": "failed",
+        "steps": [
+          "checkin"
+        ],
+        "message": "签到失败",
+        "match": {
+          "$.code": {
+            "exists": true
+          }
+        }
+      }
+    ]
+  },
+  "change_signals": [
+    "国际版实际网关端点",
+    "活动是否上线",
+    "响应字段是否与国内版一致"
+  ]
+}

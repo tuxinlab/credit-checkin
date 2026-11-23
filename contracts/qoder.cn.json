@@ -1,0 +1,266 @@
+{
+  "platform": "qoder",
+  "version": "cn",
+  "name": "Qoder 国内版 · 每日 100 Credits",
+  "contract_version": "2026-11-18.real-6",
+  "status": "active",
+  "template": false,
+  "note": "真实接口，来源于 L0NE-6/Qoder-Daily 与 88lin/workbuddy-auto-signin 的 Qoder 部分。两步骤：先 GET campaigns，筛选 actionType=CLAIM_BENEFIT 且 benefit.kind=CREDITS 的每日活动，捕获 campaignId，再 POST claim。需 Cosy 设备风控头（Cosy-MachineId/Token/Code/Type），可通过 QODER_EXTRA_HEADERS 注入 JSON。活动资格：自 2026-11-19 10:00 起每日 100 通用 Credits 仅面向 Pro 试用期及 Lite/Pro/Pro+/Ultra 个人付费订阅用户，免费体验版不再开放领取；资格不符时 campaigns 无 CLAIM_BENEFIT 属平台规则，非契约漂移。",
+  "upstream_references": [
+    "L0NE-6/Qoder-Daily",
+    "88lin/workbuddy-auto-signin"
+  ],
+  "defaults": {
+    "timeout": 25,
+    "headers": {
+      "Accept": "application/json",
+      "User-Agent": "Qoder/claim",
+      "Cosy-ClientType": "10",
+      "Cosy-Version": "${cred.client_version}",
+      "Cosy-MachineOS": "${cred.machine_os}",
+      "Cosy-MachineId": "${cred.machine_id}",
+      "Cosy-MachineHostname": "${cred.machine_hostname}",
+      "Cosy-MachineToken": "${cred.machine_token}",
+      "Cosy-MachineCode": "${cred.machine_code}",
+      "Cosy-MachineType": "${cred.machine_type}"
+    }
+  },
+  "auth": {
+    "type": "bearer",
+    "header": "Authorization",
+    "prefix": "Bearer ",
+    "headers": {
+      "Authorization": "Bearer ${token}"
+    }
+  },
+  "steps": [
+    {
+      "id": "campaigns",
+      "method": "GET",
+      "url": "https://openapi.qoder.com.cn/sash/api/v1/me/campaigns",
+      "headers": {},
+      "capture": [
+        {
+          "name": "campaign_id",
+          "path": "$.campaigns",
+          "select": {
+            "actionType": "CLAIM_BENEFIT",
+            "benefit.kind": "CREDITS",
+            "benefit.amount": 100,
+            "claimStatus": "CLAIMABLE"
+          },
+          "field": "$.campaignId",
+          "simulate": "sim-daily-100"
+        }
+      ],
+      "expected_shape": {
+        "type": "object",
+        "required_paths": [],
+        "field_types": {}
+      }
+    },
+    {
+      "id": "checkin",
+      "method": "POST",
+      "url": "https://openapi.qoder.com.cn/sash/api/v1/me/campaigns/${var.campaign_id}/claim",
+      "headers": {},
+      "when": {
+        "var.campaign_id": {
+          "exists": true,
+          "truthy": true
+        }
+      },
+      "expected_shape": {
+        "type": "object",
+        "required_paths": [],
+        "field_types": {}
+      }
+    }
+  ],
+  "response": {
+    "json_paths": {
+      "success": [
+        "$.status",
+        "$.data.status"
+      ],
+      "already": [
+        "$.status"
+      ],
+      "failed": [
+        "$.failureCode",
+        "$.code"
+      ],
+      "credits": [
+        "$.benefit.amount",
+        "$.data.benefit.amount"
+      ],
+      "message": [
+        "$.message",
+        "$.msg",
+        "$.failureCode"
+      ]
+    },
+    "values": {
+      "success": [
+        "CLAIMED",
+        "GRANTED",
+        "SUCCESS"
+      ],
+      "already": [
+        "BLOCKED",
+        "ALREADY_CLAIMED",
+        "CLAIMED"
+      ],
+      "failed": [
+        "SAME_PERSON_ALREADY_CLAIMED",
+        "INTERNAL_ERROR",
+        401,
+        403,
+        409
+      ]
+    },
+    "expected_shape": {
+      "type": "object",
+      "required_paths": [],
+      "field_types": {}
+    },
+    "verdicts": [
+      {
+        "status": "failed",
+        "fatal": true,
+        "steps": [
+          "campaigns"
+        ],
+        "message": "Qoder 凭据已失效（查询活动时鉴权被拒），请重新登录客户端或重新生成凭据",
+        "match": {
+          "$.code": {
+            "in": [
+              "TOKEN_EXPIRE",
+              "TOKEN_INVALID",
+              "UNAUTHORIZED",
+              "INVALID_TOKEN",
+              "FORBIDDEN"
+            ]
+          }
+        },
+        "auth": true
+      },
+      {
+        "status": "failed",
+        "fatal": true,
+        "steps": [
+          "checkin"
+        ],
+        "message": "Qoder 凭据已失效（领取积分时鉴权被拒），请重新登录客户端或重新生成凭据",
+        "match": {
+          "$.code": {
+            "in": [
+              "TOKEN_EXPIRE",
+              "TOKEN_INVALID",
+              "UNAUTHORIZED",
+              "INVALID_TOKEN",
+              "FORBIDDEN"
+            ]
+          }
+        },
+        "auth": true
+      },
+      {
+        "status": "skipped",
+        "steps": [
+          "campaigns"
+        ],
+        "message": "当前无可领取的每日 Credits 活动（未开窗或今日已领完）",
+        "match": {
+          "var.campaign_id": {
+            "exists": false
+          }
+        }
+      },
+      {
+        "status": "already",
+        "steps": [
+          "campaigns"
+        ],
+        "message": "活动已领取（claimStatus=CLAIMED）",
+        "match": {
+          "$.status": {
+            "equals": [
+              "CLAIMED"
+            ]
+          }
+        }
+      },
+      {
+        "status": "already",
+        "steps": [
+          "checkin"
+        ],
+        "message": "同一设备身份下今日已领取（BLOCKED）",
+        "match": {
+          "$.status": {
+            "equals": [
+              "BLOCKED"
+            ]
+          }
+        }
+      },
+      {
+        "status": "already",
+        "steps": [
+          "checkin"
+        ],
+        "message": "活动已领取（重复领取）",
+        "match": {
+          "$.failureCode": {
+            "equals": [
+              "SAME_PERSON_ALREADY_CLAIMED"
+            ]
+          }
+        }
+      },
+      {
+        "status": "failed",
+        "steps": [
+          "checkin"
+        ],
+        "message": "领取失败（上游错误）",
+        "match": {
+          "$.failureCode": {
+            "equals": [
+              "INTERNAL_ERROR"
+            ]
+          }
+        }
+      },
+      {
+        "status": "success",
+        "steps": [
+          "checkin"
+        ],
+        "message": "Qoder Credits 领取成功",
+        "credits_path": "$.benefit.amount",
+        "match": {
+          "$.status": {
+            "equals": [
+              "CLAIMED",
+              "GRANTED",
+              "SUCCESS"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "change_signals": [
+    "活动列表被设备风控降级：缺 Cosy-MachineToken/Code/Type 时只返回订阅推广，每日 CLAIM_BENEFIT 活动不会出现在 campaigns 里（看起来像没有活动）",
+    "鉴权失效（HTTP 401 / code=TOKEN_EXPIRE）必须先于「无可领活动」判定，否则会被当成正常跳过",
+    "claim 响应为扁平结构：benefit.amount 在顶层（不在 data 下）",
+    "缺少 Cosy-ClientType: 10 时服务端返回空 campaigns（不是没有活动）",
+    "活动窗口（北京时间 10:00）变化",
+    "campaigns 返回结构 $.campaigns[] 字段名变化",
+    "筛选条件 actionType / benefit.kind / claimStatus 变化",
+    "Cosy 设备风控头缺失导致 403",
+    "出现新的 BLOCKED 失败码"
+  ]
+}

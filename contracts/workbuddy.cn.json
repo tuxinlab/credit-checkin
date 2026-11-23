@@ -1,0 +1,207 @@
+{
+  "platform": "workbuddy",
+  "version": "cn",
+  "name": "WorkBuddy 国内版 · Buddy 加油站每日签到",
+  "contract_version": "2026-11-18.real-7",
+  "status": "active",
+  "template": false,
+  "note": "真实接口，来源于社区开源项目 88lin/workbuddy-auto-signin。凭据为桌面端登录态中的 accessToken；加密 envelope 需在客户端内解密后通过环境变量提供。endpoint 可由 cred.endpoint 覆盖。",
+  "upstream_references": [
+    "88lin/workbuddy-auto-signin"
+  ],
+  "defaults": {
+    "timeout": 20,
+    "headers": {
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+      "User-Agent": "WorkBuddy"
+    }
+  },
+  "auth": {
+    "type": "bearer",
+    "header": "Authorization",
+    "prefix": "Bearer ",
+    "headers": {
+      "Authorization": "Bearer ${token}",
+      "X-User-Id": "${cred.uid}",
+      "X-Domain": "${cred.domain}",
+      "X-Enterprise-Id": "${cred.enterprise_id}",
+      "X-Tenant-Id": "${cred.enterprise_id}"
+    }
+  },
+  "steps": [
+    {
+      "id": "status",
+      "method": "POST",
+      "url": "${cred.endpoint}/v2/billing/meter/checkin-activity-status",
+      "headers": {},
+      "expected_shape": {
+        "type": "object",
+        "required_paths": [],
+        "field_types": {}
+      }
+    },
+    {
+      "id": "checkin",
+      "method": "POST",
+      "url": "${cred.endpoint}/v2/billing/meter/daily-checkin",
+      "headers": {},
+      "expected_shape": {
+        "type": "object",
+        "required_paths": [],
+        "field_types": {}
+      }
+    }
+  ],
+  "response": {
+    "json_paths": {
+      "success": [
+        "$.data.credit",
+        "$.credit"
+      ],
+      "already": [
+        "$.data.today_checked_in",
+        "$.today_checked_in"
+      ],
+      "failed": [
+        "$.code",
+        "$.data.code"
+      ],
+      "credits": [
+        "$.data.today_credit",
+        "$.data.credit",
+        "$.today_credit",
+        "$.credit"
+      ],
+      "message": [
+        "$.msg",
+        "$.message",
+        "$.data.msg"
+      ]
+    },
+    "values": {
+      "success": [
+        100,
+        200
+      ],
+      "already": [
+        true,
+        1
+      ],
+      "failed": [
+        400,
+        401,
+        403,
+        500
+      ]
+    },
+    "expected_shape": {
+      "type": "object",
+      "required_paths": [],
+      "field_types": {}
+    },
+    "verdicts": [
+      {
+        "status": "failed",
+        "message": "WorkBuddy 凭据失效，尝试从客户端重新获取",
+        "match": {
+          "$.code": {
+            "equals": [
+              401,
+              403
+            ]
+          }
+        },
+        "fatal": true,
+        "auth": true
+      },
+      {
+        "status": "already",
+        "steps": [
+          "status"
+        ],
+        "message": "今日已签到（服务端状态）",
+        "match": {
+          "$.data.today_checked_in": {
+            "equals": [
+              true,
+              1
+            ]
+          }
+        }
+      },
+      {
+        "status": "skipped",
+        "steps": [
+          "status"
+        ],
+        "message": "签到活动未开启",
+        "match": {
+          "$.data.active": {
+            "equals": [
+              false
+            ]
+          }
+        }
+      },
+      {
+        "status": "already",
+        "steps": [
+          "checkin"
+        ],
+        "message": "今日已领取（重复领取业务码 10001）",
+        "match": {
+          "$.code": {
+            "equals": [
+              10001
+            ]
+          }
+        }
+      },
+      {
+        "status": "already",
+        "steps": [
+          "checkin"
+        ],
+        "message": "今日已领取（响应文案含「已签」）",
+        "match": {
+          "$.msg": {
+            "contains": "已签"
+          }
+        }
+      },
+      {
+        "status": "success",
+        "steps": [
+          "checkin"
+        ],
+        "message": "签到积分领取成功",
+        "credits_path": "$.data.credit",
+        "match": {
+          "$.data.credit": {
+            "exists": true
+          }
+        }
+      },
+      {
+        "status": "success",
+        "steps": [
+          "checkin"
+        ],
+        "message": "签到积分领取成功（credit）",
+        "credits_path": "$.credit",
+        "match": {
+          "$.credit": {
+            "exists": true
+          }
+        }
+      }
+    ]
+  },
+  "change_signals": [
+    "真实状态响应字段在 $.data.* 下（code/msg/requestId 在顶层）",
+    "data.today_checked_in / data.active 被重命名",
+    "claim 成功字段 credit 改名",
+    "出现 10001 之外的新「已签」业务码"
+  ]
+}

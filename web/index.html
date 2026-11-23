@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Credit Checkin 面板</title>
+<style>
+:root{
+  --bg:#f6f7f9; --card:#ffffff; --text:#1f2430; --muted:#6b7280; --line:#e5e7eb;
+  --accent:#2563eb; --accent-soft:#eff6ff; --ok:#0f9d58; --ok-soft:#e8f5ee;
+  --warn:#b45309; --warn-soft:#fef3c7; --err:#c0392b; --err-soft:#fdecea;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:24px 20px 60px}
+header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+h1{font-size:20px;margin:0;font-weight:600}
+.meta{color:var(--muted);font-size:12px}
+.tabs{display:flex;gap:6px;margin:20px 0 16px;border-bottom:1px solid var(--line)}
+.tab{padding:9px 15px;cursor:pointer;border:0;background:none;color:var(--muted);font-size:14px;border-bottom:2px solid transparent}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.stat .n{font-size:26px;font-weight:600;line-height:1.2}
+.stat .l{color:var(--muted);font-size:12px;margin-top:4px}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+button,select,input{font:inherit}
+.btn{padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);cursor:pointer}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn.primary:hover{opacity:.9;color:#fff}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+select,input[type=date]{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:500;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:12px;white-space:nowrap}
+.tag.success{background:var(--ok-soft);color:var(--ok)}
+.tag.already{background:var(--accent-soft);color:var(--accent)}
+.tag.failed,.tag.drift{background:var(--err-soft);color:var(--err)}
+.tag.skipped{background:var(--warn-soft);color:var(--warn)}
+.tag.pending,.tag.running{background:#f3f4f6;color:var(--muted)}
+.muted{color:var(--muted)}
+.msg{max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.empty{padding:36px;text-align:center;color:var(--muted)}
+.banner{padding:12px 16px;border-radius:10px;margin-bottom:16px;font-size:13px}
+.banner.info{background:var(--accent-soft);color:var(--accent)}
+.banner.warn{background:var(--warn-soft);color:var(--warn)}
+.banner.err{background:var(--err-soft);color:var(--err)}
+details summary{cursor:pointer;color:var(--accent)}
+pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font-size:12px;max-height:260px}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+#toast{position:fixed;right:20px;bottom:20px;padding:12px 18px;border-radius:10px;background:#1f2430;color:#fff;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+#toast.show{opacity:1}
+.form-row{display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center;margin-bottom:10px}
+.form-row label{color:var(--muted);font-size:13px}
+.form-row input,.form-row select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text)}
+.guide{background:var(--accent-soft);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:var(--accent)}
+.guide ol{margin:8px 0 0;padding-left:20px}
+.actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+@media(max-width:640px){.wrap{padding:16px 12px 40px}.msg{max-width:160px}.form-row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>Credit Checkin</h1>
+  <span class="meta" id="meta">连接到本机服务…</span>
+</header>
+
+<div id="notice"></div>
+
+<div class="tabs">
+  <button class="tab active" data-tab="overview">今日概览</button>
+  <button class="tab" data-tab="accounts">账号配置</button>
+  <button class="tab" data-tab="history">执行历史</button>
+  <button class="tab" data-tab="contracts">契约状态</button>
+  <button class="tab" data-tab="drifts">异常与漂移</button>
+</div>
+
+<section id="tab-overview">
+  <div class="stats" id="stats"></div>
+  <div class="card">
+    <div class="toolbar">
+      <button class="btn primary" id="btn-run">立即签到</button>
+      <button class="btn" id="btn-simulate" title="不真正签到，只验证流程是否跑得通">模拟运行</button>
+      <label class="meta"><input type="checkbox" id="chk-force"> 忽略去重强制执行</label>
+      <span class="meta" id="run-hint"></span>
+    </div>
+    <p class="meta" style="margin:-4px 0 12px">模拟运行只走流程、不真正签到，<b>不会写入记录</b>，可放心点。</p>
+    <div id="run-result"></div>
+  </div>
+  <div class="card"><h3 style="margin:0 0 12px;font-size:14px">近 14 天积分</h3><div id="trend-box"></div></div>
+  <div class="card"><h3 style="margin:0 0 12px;font-size:14px">今日各账号状态</h3><div id="today-table"></div>
+    <p class="meta">「本次领取」＝这次运行真的发起领取并拿到积分；「今日已领」＝运行前服务端就显示已领过（客户端手动签的，或更早一次运行领的）。两者都计入今日积分，都不会重复领取。</p>
+  </div>
+</section>
+
+<section id="tab-history" hidden>
+  <div class="card">
+    <div class="toolbar">
+      <select id="h-status"><option value="">全部状态</option><option value="success">成功</option><option value="already">已签</option><option value="failed">失败</option><option value="skipped">跳过</option><option value="drift">漂移</option></select>
+      <select id="h-platform"><option value="">全部平台</option><option value="workbuddy">WorkBuddy</option><option value="trae">Trae</option><option value="qoder">Qoder</option></select>
+      <button class="btn" id="btn-refresh-history">刷新</button>
+    </div>
+    <div id="history-table"></div>
+  </div>
+</section>
+
+<section id="tab-accounts" hidden>
+  <div class="banner info">凭据用 Windows DPAPI 加密保存在本机 <code>data/vault.json</code>，只有当前用户能解密；面板不会显示 token 原文。</div>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 style="margin:0;font-size:14px">已配置账号</h3>
+      <button class="btn primary" id="btn-add-account">+ 添加账号</button>
+    </div>
+    <div id="account-config-table"></div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 12px;font-size:14px">每日自动签到</h3>
+    <div id="schedule-box"></div>
+  </div>
+  <div class="card">
+    <h3 style="margin:0 0 12px;font-size:14px">本机客户端登录态探测</h3>
+    <div id="probe-table"></div>
+    <p class="meta">这里只检查「客户端是否在本机登录过」，不读取任何内容。显示<b>已找到</b>说明可以点「配置凭据 → 自动获取本机凭据」一键取出 token；显示<b>未找到</b>则需先打开对应客户端完成登录，或改为手动粘贴 token。</p>
+  </div>
+</section>
+
+<section id="tab-contracts" hidden>
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="margin:0;font-size:14px">版本与更新</h3>
+      <button class="btn" id="btn-check-update" style="padding:4px 10px">检查更新</button>
+    </div>
+    <div id="version-box" class="meta">加载中…</div>
+  </div>
+  <div class="card"><h3 style="margin:0 0 12px;font-size:14px">已加载契约</h3><div id="contract-table"></div></div>
+  <div class="card">
+    <h3 style="margin:0 0 12px;font-size:14px">当前配置</h3>
+    <div id="config-box"></div>
+  </div>
+</section>
+
+<section id="tab-drifts" hidden>
+  <div class="card"><h3 style="margin:0 0 12px;font-size:14px">契约漂移事件</h3><div id="drift-table"></div></div>
+</section>
+
+<div id="modal" style="position:fixed;inset:0;background:rgba(31,36,48,.4);display:none;align-items:flex-start;justify-content:center;padding:60px 16px;z-index:20">
+  <div class="card" style="width:100%;max-width:560px;margin:0;box-shadow:0 8px 30px rgba(0,0,0,.15)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <h3 id="modal-title" style="margin:0;font-size:15px">配置账号</h3>
+      <button class="btn" id="modal-close" style="padding:4px 10px">关闭</button>
+    </div>
+    <div id="modal-body"></div>
+  </div>
+</div>
+<div id="toast"></div>
+</div>
+
+<script>
+const STATUS_LABEL={success:'本次领取',already:'今日已领',failed:'失败',skipped:'跳过',drift:'漂移',running:'运行中',pending:'待执行'};
+// 两个「已到账」状态的区别：本次是否真的发起了领取
+const STATUS_HINT={
+  success:'本次运行真实发起了领取，并拿到积分（本次新增）',
+  already:'运行前服务端就显示今天已领过：你在客户端手动签的，或更早的一次运行领过',
+  skipped:'没有执行领取（凭据缺失 / 无可领活动 / 未启用）',
+  failed:'执行失败，可看「异常与漂移」里的原因',
+  drift:'接口返回无法识别，需要更新契约',
+};
+const $=s=>document.querySelector(s);
+let current='overview';
+let modalTimer=null;  // 设备授权轮询定时器，统一在 closeModal 里清理
+function stopPolling(){if(modalTimer){clearInterval(modalTimer);modalTimer=null;}}
+
+function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2600);}
+async function api(path,opts){const r=await fetch(path,opts);const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+// 供单引号包裹的 onclick 属性安全传参：先 JSON 序列化，再把单引号转成 HTML 实体，
+// 避免账号备注名里的 ' 提前闭合属性造成注入。
+function attrJson(v){return JSON.stringify(JSON.stringify(v)).replace(/'/g,'&#39;');}
+function tag(s){return `<span class="tag ${esc(s)}" title="${esc(STATUS_HINT[s]||'')}">${STATUS_LABEL[s]||esc(s)}</span>`;}
+function table(cols,rows){if(!rows.length)return '<div class="empty">暂无数据</div>';return `<table><thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;}
+function short(t){if(!t)return '-';const s=String(t);const i=s.indexOf('T');return i>=0?s.slice(i+1,16):s.slice(0,16);}
+
+function renderRuns(runs,{withAttempts=false}={}){
+  return table(['账号','平台/版本','日期','状态','次数','积分','补跑','完成时间','说明'],runs.map(r=>`<tr>
+    <td>${esc(r.account_id)}${r.account_identity?`<div class="meta">${esc(r.account_identity)}</div>`:''}</td>
+    <td>${esc(r.platform)}.${esc(r.version)}</td>
+    <td>${esc(r.target_date)}</td>
+    <td>${tag(r.status)}</td>
+    <td>${r.attempts??0}</td>
+    <td>${r.credits??'-'}</td>
+    <td>${r.is_catchup?'是':'否'}</td>
+    <td class="muted">${short(r.finished_at)}</td>
+    <td class="msg" title="${esc(r.message)}">${esc(r.message||'-')}</td>
+  </tr>`));
+}
+
+async function loadOverview(){
+  const d=await api('/api/overview');
+  $('#meta').textContent=`今日 ${d.today} · 时区 ${d.timezone} · 窗口 ${d.window.start}~${d.window.end}`;
+  const s=d.stats;
+  $('#stats').innerHTML=`
+    <div class="stat"><div class="n">${s.total}</div><div class="l">今日任务</div></div>
+    <div class="stat"><div class="n" style="color:var(--ok)">${s.by_status.success||0}</div><div class="l">本次领取</div></div>
+    <div class="stat"><div class="n" style="color:var(--accent)">${s.by_status.already||0}</div><div class="l">运行前已领</div></div>
+    <div class="stat"><div class="n" style="color:var(--err)">${(s.by_status.failed||0)+(s.by_status.drift||0)}</div><div class="l">失败 / 漂移</div></div>
+    <div class="stat"><div class="n">${s.credits_today}</div><div class="l">今日积分</div></div>`;
+  $('#today-table').innerHTML=renderRuns(d.runs);
+  drawTrend(await api('/api/trend?days=14'));
+  let notice='';
+  if(d.contract_errors?.length)notice+=`<div class="banner err">契约加载错误 ${d.contract_errors.length} 项，请在「契约状态」查看。</div>`;
+  const noCred=d.accounts.filter(a=>a.enabled&&a.credential_source==='none').length;
+  if(noCred)notice+=`<div class="banner warn">有 ${noCred} 个启用的账号还没有凭据。到「账号配置」点「配置凭据」添加，可先用「模拟运行」验证流程。</div>`;
+  if(!notice)notice='<div class="banner info">一切就绪。凭据加密保存在本机，面板不会显示 token 原文。</div>';
+  $('#notice').innerHTML=notice;
+}
+
+function drawTrend(t){
+  const days=t.days||[];
+  if(!days.length){$('#trend-box').innerHTML='<div class="empty">暂无数据</div>';return;}
+  const W=680,H=150,pad=28;
+  const max=Math.max(1,...days.map(x=>x.credits));
+  const bw=(W-pad*2)/days.length;
+  const barW=Math.min(30,bw*0.62);
+  let bars='',labels='',values='';
+  days.forEach((d,i)=>{
+    const h=Math.round((d.credits/max)*(H-pad*2-14));
+    const x=pad+i*bw+(bw-barW)/2;
+    const y=H-pad-h;
+    const today=d.date===days[days.length-1].date;
+    bars+=`<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(h,1)}" rx="3" fill="${d.credits?'var(--ok)':'var(--err-soft)'}"><title>${d.date}：${d.credits} 分</title></rect>`;
+    if(d.credits)values+=`<text x="${x+barW/2}" y="${y-4}" font-size="10" text-anchor="middle" fill="var(--muted)">${d.credits}</text>`;
+    labels+=`<text x="${x+barW/2}" y="${H-8}" font-size="10" text-anchor="middle" fill="${today?'var(--accent)':'var(--muted)'}">${d.date.slice(5)}</text>`;
+  });
+  $('#trend-box').innerHTML=`<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+    <line x1="${pad}" y1="${H-pad}" x2="${W-pad}" y2="${H-pad}" stroke="var(--muted)" stroke-width="1"/>
+    ${bars}${values}${labels}
+    <text x="${pad}" y="14" font-size="11" fill="var(--muted)">近 ${days.length} 天合计 ${t.total} 分</text>
+  </svg>`;
+}
+
+
+async function loadHistory(){
+  const s=$('#h-status').value,p=$('#h-platform').value;
+  let url='/api/history?limit=100';if(s)url+='&status='+encodeURIComponent(s);if(p)url+='&platform='+encodeURIComponent(p);
+  const d=await api(url);$('#history-table').innerHTML=renderRuns(d.items);
+}
+
+function openModal(title,body){$('#modal-title').textContent=title;$('#modal-body').innerHTML=body;$('#modal').style.display='flex';}
+function closeModal(){stopPolling();$('#modal').style.display='none';$('#modal-body').innerHTML='';}
+$('#modal-close').onclick=closeModal;
+$('#modal').addEventListener('click',e=>{if(e.target===$('#modal'))closeModal();});
+
+async function showAddAccount(){
+  openModal('添加账号',`
+    <div class="form-row"><label>平台</label><select id="f-platform"><option value="workbuddy">WorkBuddy</option><option value="trae">Trae</option><option value="qoder">Qoder</option></select></div>
+    <div class="form-row"><label>版本</label><select id="f-version"><option value="cn">国内版 cn</option><option value="global">国际版 global</option></select></div>
+    <div class="form-row"><label>备注名</label><input id="f-name" placeholder="只是给你自己看的标签，可留空；真实账号会自动识别"></div>
+    <p class="meta">账号 ID 由系统自动分配（如 qoder-gl-01），无需手填；添加后点「配置凭据」自动识别真实账号。</p>
+    <div class="actions"><button class="btn" onclick="closeModal()">取消</button><button class="btn primary" id="f-save">添加</button></div>`);
+  $('#f-save').onclick=async()=>{
+    try{
+      const d=await api('/api/account',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        action:'add',platform:$('#f-platform').value,version:$('#f-version').value,
+        name:$('#f-name').value.trim()})});
+      toast(d.message||('已添加 '+((d.account&&d.account.id)||'')));closeModal();await loadAccountConfig();
+    }catch(e){toast('添加失败：'+e.message);}
+  };
+}
+
+async function showCredential(acc){
+  let guide={title:`${acc.platform}.${acc.version}`,steps:[],fields:[]};
+  try{guide=await api('/api/guide?platform='+encodeURIComponent(acc.platform));}catch(e){}
+  const fieldRows=(guide.fields||[]).map(f=>`<div class="form-row"><label>${esc(f)}</label><input id="cf-${esc(f)}" placeholder="可选"></div>`).join('');
+  const autoLabel='自动获取本机凭据';
+  const autoBtn=`<button class="btn" id="cf-auto" style="margin-right:auto;color:var(--accent)">${autoLabel}</button>`;
+  const devBtn=acc.platform==='qoder'?'<button class="btn" id="cf-device" style="color:var(--accent)">设备授权登录</button>':'';
+  const delBtn=acc.has_credential?'<button class="btn" id="cf-del" style="color:var(--err)">删除凭据</button>':'';
+  openModal('配置凭据 · '+acc.id,`
+    <div class="guide"><b>${esc(guide.title)} · 如何获取 token</b><ol>${(guide.steps||[]).map(s=>`<li>${esc(s)}</li>`).join('')}</ol></div>
+    <div class="form-row"><label>token</label><input id="cf-token" type="password" placeholder="粘贴明文 token（不会显示在页面）"></div>
+    ${fieldRows}
+    <div class="actions">
+      ${autoBtn}${devBtn}${delBtn}
+      <button class="btn" onclick="closeModal()">取消</button>
+      <button class="btn primary" id="cf-save">保存</button>
+    </div>`);
+  function fillFields(fields){
+    for(const [k,v] of Object.entries(fields||{})){
+      const el=document.getElementById('cf-'+k);if(el&&v)el.value=v;
+    }
+  }
+  async function afterAuto(msg){toast(msg);$('#cf-token').value='<已自动获取并保存>';fillFields({});closeModal();await loadAccountConfig();await loadOverview();}
+  // 统一：自动获取本机凭据（三个平台都走 /api/autofill）
+  $('#cf-auto').onclick=async()=>{
+    const b=$('#cf-auto');b.disabled=true;b.textContent='获取中…';
+    try{
+      const d=await api('/api/autofill?platform='+encodeURIComponent(acc.platform)+'&version='+encodeURIComponent(acc.version)+'&id='+encodeURIComponent(acc.id));
+      toast(d.message);$('#cf-token').value='<已自动获取并保存>';fillFields(d.fields);
+      closeModal();await loadAccountConfig();await loadOverview();
+    }catch(e){toast('自动获取失败：'+e.message);b.disabled=false;b.textContent=autoLabel;}
+  };
+  // Qoder 备选：设备授权登录（本机没有登录态时用）
+  if(devBtn&&$('#cf-device')){
+    let session='',polling=false;
+    $('#cf-device').onclick=async()=>{
+      const b=$('#cf-device');b.disabled=true;b.textContent='发起授权…';
+      try{
+        const s=await api('/api/qoder/login/start?region='+encodeURIComponent(acc.version==='global'?'global':'cn'));
+        session=s.session;
+        window.open(s.auth_url,'_blank');
+        $('#modal-body').insertAdjacentHTML('afterbegin',
+          `<div class="guide"><b>请在打开的浏览器页面确认授权</b><br>
+           <a href="${esc(s.auth_url)}" target="_blank" style="color:var(--accent)">没弹出？点这里打开授权页</a><br>
+           <span class="meta">确认后点下方按钮，或等待自动检测。</span></div>`);
+        b.textContent='我已授权，获取凭据';b.disabled=false;
+        b.onclick=doPoll;
+        stopPolling();
+        modalTimer=setInterval(doPoll,5000);
+      }catch(e){toast('发起授权失败：'+e.message);b.disabled=false;b.textContent='设备授权登录';}
+    };
+    async function doPoll(){
+      if(!session||polling)return;
+      polling=true;
+      try{
+        const d=await api('/api/qoder/login/poll?session='+encodeURIComponent(session)+'&id='+encodeURIComponent(acc.id)+'&version='+encodeURIComponent(acc.version));
+        if(d.pending)return;
+        stopPolling();
+        await afterAuto(d.message);
+      }catch(e){toast(e.message);}
+      finally{polling=false;}
+    }
+  }
+  $('#cf-save').onclick=async()=>{
+    const token=$('#cf-token').value.trim();
+    if(!token){toast('请先粘贴 token');return;}
+    const fields={};
+    (guide.fields||[]).forEach(f=>{const v=document.getElementById('cf-'+f)?.value.trim();if(v)fields[f]=v;});
+    try{
+      const d=await api('/api/credential',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        action:'save',platform:acc.platform,version:acc.version,id:acc.id,token,fields})});
+      toast(d.message);closeModal();await loadAccountConfig();await loadOverview();
+    }catch(e){toast('保存失败：'+e.message);}
+  };
+  if(acc.has_credential)$('#cf-del').onclick=async()=>{
+    try{
+      const d=await api('/api/credential',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        action:'delete',platform:acc.platform,version:acc.version,id:acc.id})});
+      toast(d.message);closeModal();await loadAccountConfig();await loadOverview();
+    }catch(e){toast('删除失败：'+e.message);}
+  };
+}
+
+async function loadAccountConfig(){
+  const d=await api('/api/accounts');
+  const rows=d.items.map(a=>`<tr>
+    <td>${esc(a.id)}</td><td>${esc(a.platform)}.${esc(a.version)}</td><td>${esc(a.name)}</td>
+    <td>${a.identity?`<b>${esc(a.identity)}</b>${a.identity_phone?`<div class="meta">${esc(a.identity_phone)}</div>`:''}`:'<span class="meta">未获取，点「配置凭据 → 自动获取」</span>'}</td>
+    <td>${a.unsupported?'<span class="tag skipped" title="'+esc(a.note||'该版本无签到活动')+'">无签到活动</span>':(a.enabled?'<span class="tag success">启用</span>':'<span class="tag skipped">停用</span>')}${!a.unsupported&&a.version_enabled===false?'<div class="meta" style="margin-top:4px">版本开关关闭</div>':''}</td>
+    <td>${a.has_credential?'<span class="tag success">已配置</span>':'<span class="tag failed">未配置</span>'}${a.platform==='qoder'&&a.has_credential&&a.device_identity===false?'<div class="meta" style="color:var(--warn);margin-top:4px">缺设备身份，平台会只返回订阅推广</div>':''}</td>
+    <td style="white-space:nowrap">
+      <button class="btn" style="padding:4px 9px" onclick='window._cfgCred(${attrJson(a)})'>配置凭据</button>
+      <button class="btn" style="padding:4px 9px" onclick='window._verifyAcc(${attrJson(a)})'>验证</button>
+      <button class="btn" style="padding:4px 9px" onclick='window._renameAcc(${attrJson(a)})'>改名</button>
+      <button class="btn" style="padding:4px 9px" ${a.unsupported?'disabled title="'+esc(a.note||'该版本无签到活动')+'"':''} onclick='window._toggleAcc(${attrJson(a)})'>${a.enabled?'停用':'启用'}</button>
+      <button class="btn" style="padding:4px 9px;color:var(--err)" onclick='window._delAcc(${attrJson(a)})'>删除</button>
+    </td>
+  </tr>`);
+  $('#account-config-table').innerHTML=table(['账号 ID（自动）','平台/版本','备注名','真实账号（绑定）','状态','凭据','操作'],rows)
+    +`<p class="meta">「备注名」只是你起的标签；「真实账号」是从本机客户端登录态解析出的实际登录身份，签到就发生在该账号上。凭据存储：${d.encrypted?'Windows DPAPI 加密':'明文（非 Windows，请注意文件权限）'}</p>`;
+  window._cfgCred=s=>showCredential(JSON.parse(s));
+  window._toggleAcc=async s=>{const a=JSON.parse(s);try{await api('/api/account',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'enable',platform:a.platform,version:a.version,id:a.id,enabled:!a.enabled})});await loadAccountConfig();await loadOverview();}catch(e){toast(e.message);}};
+  window._renameAcc=async s=>{const a=JSON.parse(s);const name=prompt('修改备注名（可留空清空）',a.name||'');if(name===null)return;try{const d=await api('/api/account',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'rename',platform:a.platform,version:a.version,id:a.id,name})});toast(d.message);await loadAccountConfig();}catch(e){toast(e.message);}};
+  const HEALTH_LABEL={valid:'凭据有效',auth_dead:'凭据已失效，请重新获取',drift:'接口结构变化，需更新契约',error:'网络或其它错误',no_credential:'没有可用凭据',unknown:'无法判定（看「说明」）'};
+  window._verifyAcc=async s=>{const a=JSON.parse(s);toast('正在验证 '+a.id+' …');try{
+    const d=await api('/api/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({platform:a.platform,version:a.version,id:a.id})});
+    const label=HEALTH_LABEL[d.health]||d.message||'完成';
+    const prefix=d.ok?'✅ ':'⚠️ ';
+    toast(prefix+label+(d.message?`：${d.message.slice(0,60)}`:''));
+  }catch(e){toast('验证失败：'+e.message);}};
+  window._delAcc=async s=>{const a=JSON.parse(s);if(!confirm('确定删除账号 '+a.id+' 及其凭据？'))return;try{const d=await api('/api/account',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'remove',platform:a.platform,version:a.version,id:a.id})});toast(d.message);await loadAccountConfig();await loadOverview();}catch(e){toast(e.message);}};
+  const p=(await api('/api/overview')).probe;
+  $('#probe-table').innerHTML=table(['平台','本地登录态','路径'],['workbuddy','trae','qoder'].map(k=>`<tr>
+    <td>${k}</td><td>${p[k].found?'<span class="tag success">已找到</span>':'<span class="tag skipped">未找到</span>'}</td>
+    <td class="msg muted" title="${esc((p[k].paths||[]).join('; '))}">${esc((p[k].paths||[]).slice(0,1).join('; '))||'-'}</td>
+  </tr>`));
+}
+
+async function loadSchedule(){
+  const d=await api('/api/schedule');
+  const cfgd=await api('/api/config');
+  const win=d.supported;
+  const task=d.task||{};
+  $('#schedule-box').innerHTML=`
+    ${win?'':'<div class="banner warn">当前系统不是 Windows，无法一键注册系统计划任务。可用 <code>python -m checkin schedule</code> 常驻运行。</div>'}
+    <div class="form-row" style="max-width:340px"><label>每天时间</label><input type="time" id="s-time" value="${esc(d.time)}"></div>
+    <div class="form-row" style="max-width:340px"><label>兜底时间（可选，到点没签成时再试一次）</label><input type="time" id="s-time2" value="${esc(d.second_time||'')}"></div>
+    <details style="margin:10px 0">
+      <summary class="meta" style="cursor:pointer">高级：守护模式参数（当前用计划任务模式，不用管这里）</summary>
+      <div class="form-row" style="max-width:340px;margin-top:8px"><label>签到窗口 —— 只在你运行 <code>python -m checkin schedule</code> 常驻程序时生效：它每 30 分钟醒一次，但只在窗口内（默认 09:00–12:00）执行签到，因为 Qoder 活动 10:00 才开</label>
+        <div style="display:flex;gap:8px"><input type="time" id="s-ws" value="${esc(cfgd.checkin_window.start)}"><input type="time" id="s-we" value="${esc(cfgd.checkin_window.end)}"></div></div>
+    </details>
+    <div class="form-row" style="max-width:340px"><label>时区（影响"今天"从几点算起，一般不用改）</label><input id="s-tz" value="${esc(cfgd.timezone)}" placeholder="Asia/Shanghai"></div>
+    <div class="meta" style="margin:8px 0 14px">
+      ${task.registered?`<div style="margin-bottom:6px">系统任务：<span class="tag success">已注册</span> 状态 ${esc(task.state||'')}${task.last_result&&task.last_result!=='0'?` · 上次结果码 ${esc(task.last_result)}`:''}</div>`:`系统任务：<span class="tag skipped">未注册</span><br>`}
+      <b>什么时候跑</b>：每天 <b>${esc(d.time)}</b> 自动执行${d.second_time?`，<b>${esc(d.second_time)}</b> 兜底再试一次`:''}${task.registered?'，下次 '+esc(short(task.next_run)||'-'):''}。<br>
+      到点时如果电脑关机/睡眠，恢复开机或登录后 Windows 会自动补跑当天这一次。<br>
+      <b>跑多少次</b>：每个账号每天只领取 1 次，已领过的自动跳过，绝无重复。<br>
+      <b>怎么容错</b>：失败自动重试（间隔 60s/300s/900s）· 凭据失效自动换新重试 · 接口改版会停止并告警。<br>
+      <b>注意</b>：积分只能领当天的，前一天漏了平台不允许补领。兜底时间清空 = 只在主时间跑一次。
+    </div>
+    <div class="actions" style="justify-content:flex-start">
+      ${win?`<button class="btn primary" id="s-install">开启每日自动签到</button>
+      ${task.registered?'<button class="btn" id="s-uninstall" style="color:var(--err)">关闭自动签到</button>':''}`:''}
+      <button class="btn" id="s-save">仅保存时间</button>
+      <button class="btn" id="s-save-general">保存窗口与时区</button>
+    </div>
+    <p class="meta" style="margin-top:12px">开启后每天 10:20 和 15:00 各自动签到一次；当天已领过的自动跳过，不会重复领取。</p>`;
+  const t=()=>$('#s-time').value;
+  if($('#s-save'))$('#s-save').onclick=async()=>{try{const d=await api('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save',enabled:$('#chk-sched-enabled')?.checked??true,time:t(),second_time:$('#s-time2').value})});toast(d.message);}catch(e){toast(e.message);}};
+  if($('#s-save-general'))$('#s-save-general').onclick=async()=>{try{
+    const d=await api('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save_general',
+      timezone:$('#s-tz').value.trim(),window_start:$('#s-ws').value,window_end:$('#s-we').value})});
+    toast(d.message);await loadSchedule();}catch(e){toast(e.message);}};
+  if($('#s-install'))$('#s-install').onclick=async()=>{try{const d=await api('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'install',time:t(),second_time:$('#s-time2').value})});toast(d.message);await loadSchedule();}catch(e){toast('注册失败：'+e.message);}};
+  if($('#s-uninstall'))$('#s-uninstall').onclick=async()=>{if(!confirm('确定关闭每日自动签到？'))return;try{const d=await api('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'uninstall'})});toast(d.message);await loadSchedule();}catch(e){toast(e.message);}};
+}
+
+async function loadVersion(force){
+  try{
+    const v=await api('/api/version'+(force?'?force=1':''));
+    let html=`当前版本 <b>${esc(v.current)}</b>`;
+    if(v.has_update){
+      html+=` · <span style="color:var(--accent)">发现新版本 ${esc(v.latest)}</span>`;
+      if(v.download_url)html+=` · <a href="${esc(v.download_url)}" target="_blank" style="color:var(--accent)">下载新版 exe</a>`;
+      if(v.notes)html+=`<div class="meta" style="margin-top:6px;white-space:pre-wrap">${esc(v.notes.slice(0,300))}</div>`;
+    }else if(v.latest){
+      html+=` · 已是最新版本（${esc(v.latest)}）`;
+    }else if(v.error){
+      html+=` · <span class="muted">暂无法检查更新（${esc(v.error)}），不影响签到</span>`;
+    }
+    $('#version-box').innerHTML=html;
+  }catch(e){$('#version-box').innerHTML=`<span class="muted">版本检查失败：${esc(e.message)}</span>`;}
+}
+async function loadContracts(){
+  loadVersion(false).catch(()=>{});
+  const c=await api('/api/contracts');
+  let html=table(['平台','版本','名称','契约版本','状态','步骤数','说明'],c.items.map(x=>`<tr>
+    <td>${esc(x.platform)}</td><td>${esc(x.version)}</td><td>${esc(x.name)}</td>
+    <td class="muted">${esc(x.contract_version)}</td><td>${esc(x.status)}</td><td>${x.steps}</td>
+    <td class="msg muted">${esc(x.note||'-')}</td>
+  </tr>`));
+  if(c.errors?.length)html+=`<div class="banner err">${c.errors.map(esc).join('<br>')}</div>`;
+  $('#contract-table').innerHTML=html;
+  const cfg=await api('/api/config');
+  $('#config-box').innerHTML=table(['配置项','值'],[
+    ['时区',cfg.timezone],['签到窗口',`${cfg.checkin_window.start} ~ ${cfg.checkin_window.end}`],
+    ['最大重试',cfg.retry.max_attempts],['历史保留',`${cfg.retention_days} 天`],
+    ['配置文件',cfg.config_path]]);
+}
+
+async function loadDrifts(){
+  const d=await api('/api/drifts?limit=100');
+  if(!d.items.length){$('#drift-table').innerHTML='<div class="empty">没有契约漂移事件，接口契约与响应一致。</div>';return;}
+  const rows=d.items.map(e=>`<tr>
+    <td class="muted" style="white-space:nowrap">${short(e.detected_at)}</td>
+    <td style="white-space:nowrap">${esc(e.platform)}.${esc(e.version)}</td>
+    <td class="muted" style="white-space:nowrap">${esc(e.contract_version)}</td>
+    <td style="min-width:220px;line-height:1.5">${esc(e.reason)}</td>
+    <td style="width:280px;max-width:280px"><details><summary>查看</summary><pre style="max-width:100%;white-space:pre-wrap;word-break:break-all">${esc(e.sample||'')}</pre></details></td>
+  </tr>`);
+  $('#drift-table').innerHTML=`<table style="table-layout:fixed;width:100%">
+    <colgroup><col style="width:78px"><col style="width:130px"><col style="width:120px"><col><col style="width:280px"></colgroup>
+    <thead><tr><th>时间</th><th>平台/版本</th><th>契约版本</th><th>原因</th><th>响应样本</th></tr></thead>
+    <tbody>${rows.join('')}</tbody></table>`;
+}
+
+async function runCheckin(simulate){
+  const btn=simulate?$('#btn-simulate'):$('#btn-run');
+  const old=btn.innerHTML;btn.disabled=true;btn.innerHTML='<span class="spin"></span> 执行中…';
+  $('#run-result').innerHTML='';
+  try{
+    const body={simulate,force:$('#chk-force').checked};
+    const d=await api('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    $('#run-result').innerHTML=`<div class="${d.ok?'banner info':'banner warn'}">${esc(d.message)}</div>`+renderRuns(d.records);
+    toast(d.message);
+    await loadOverview();
+  }catch(e){$('#run-result').innerHTML=`<div class="banner err">${esc(e.message)}</div>`;toast('执行失败');}
+  finally{btn.disabled=false;btn.innerHTML=old;}
+}
+
+$('#btn-add-account').onclick=showAddAccount;
+$('#btn-check-update').onclick=async(e)=>{const b=e.currentTarget;b.disabled=true;b.textContent='检查中…';await loadVersion(true).catch(()=>{});b.disabled=false;b.textContent='检查更新';};
+const LOADERS={overview:loadOverview,history:loadHistory,
+  accounts:async()=>{await loadAccountConfig();await loadSchedule();},
+  contracts:loadContracts,drifts:loadDrifts};
+document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));b.classList.add('active');
+  current=b.dataset.tab;
+  document.querySelectorAll('section').forEach(s=>s.hidden=true);
+  $('#tab-'+current).hidden=false;
+  (LOADERS[current]||loadOverview)().catch(e=>toast(e.message));
+}));
+$('#btn-run').onclick=()=>runCheckin(false);
+$('#btn-simulate').onclick=()=>runCheckin(true);
+$('#btn-refresh-history').onclick=()=>loadHistory().catch(e=>toast(e.message));
+$('#h-status').onchange=$('#h-platform').onchange=()=>loadHistory().catch(e=>toast(e.message));
+
+const REQUIRED_CAPS=['autofill.workbuddy','autofill.trae','qoder.device','run.simulate_memory_only','autofill.qoder'];
+async function checkBackend(){
+  try{
+    const h=await api('/api/health');
+    const missing=REQUIRED_CAPS.filter(c=>!(h.capabilities||[]).includes(c));
+    if(missing.length){
+      $('#notice').innerHTML=`<div class="banner err">后端版本过旧（缺少能力：${missing.join('、')}）。请关闭正在运行的面板窗口或进程，重新双击 start.bat 启动。</div>`;
+      return false;
+    }
+    return true;
+  }catch(e){
+    $('#notice').innerHTML=`<div class="banner err">无法连接后端服务：${esc(e.message)}。请重新启动面板。</div>`;
+    return false;
+  }
+}
+checkBackend().then(ok=>{ if(ok) loadOverview().catch(e=>{$('#notice').innerHTML=`<div class="banner err">连接失败：${esc(e.message)}</div>`}); });
+setInterval(()=>{if(current==='overview'&&!$('#btn-run').disabled)loadOverview().catch(()=>{});},15000);</script>
+</body>
+</html>

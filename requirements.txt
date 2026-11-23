@@ -1,0 +1,2 @@
+# 仅使用 Python 标准库，无需 pip install。
+# 要求：Python >= 3.9

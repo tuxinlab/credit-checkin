@@ -1,0 +1,30 @@
+# .gitignore
+
+# 配置与凭据
+config.json
+*.local.json
+.env
+*.token
+*.pat
+
+# 运行时数据
+data/
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# PyInstaller 构建产物
+build/
+dist/
+*.spec
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
