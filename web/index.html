@@ -542,6 +542,8 @@ async function checkBackend(){
   }
 }
 checkBackend().then(ok=>{ if(ok){ loadVersion(false).catch(()=>{}); loadOverview().catch(e=>{$('#notice').innerHTML=`<div class="banner err">连接失败：${esc(e.message)}</div>`}); } });
-setInterval(()=>{if(current==='overview'&&!$('#btn-run').disabled)loadOverview().catch(()=>{});},15000);</script>
+setInterval(()=>{if(current==='overview'&&!$('#btn-run').disabled)loadOverview().catch(()=>{});},15000);
+// 每 30 分钟静默查一次版本：面板常开时也能发现新版本（后端有 1 小时缓存，不会频繁打 GitHub）
+setInterval(()=>{loadVersion(false).catch(()=>{});},30*60*1000);</script>
 </body>
 </html>
