@@ -133,19 +133,6 @@ def _trend(state: WebState, days: int = 14) -> Dict[str, Any]:
     return {"days": series, "total": total}
 
 
-def _exit_soon(delay: float = 1.2) -> None:
-    """留出发送 HTTP 响应的时间后退出进程，让更新替换脚本接管文件。"""
-    import os
-    import threading
-    import time
-
-    def _do() -> None:
-        time.sleep(delay)
-        os._exit(0)
-
-    threading.Thread(target=_do, daemon=True).start()
-
-
 def _run_overview(state: WebState) -> Dict[str, Any]:
     cfg = state.cfg
     tz = cfg.get("timezone", "Asia/Shanghai")
@@ -332,6 +319,10 @@ class WebHandler(BaseHTTPRequestHandler):
                                  "capabilities": API_CAPS,
                                  "started_at": getattr(self.state, "started_at", ""),
                                  "pid": __import__("os").getpid()})
+                return
+            if path == "/api/update/progress":
+                from .updater import download_progress
+                self._send_json(download_progress())
                 return
             if path == "/api/version":
                 from .updater import check_update
@@ -555,10 +546,8 @@ class WebHandler(BaseHTTPRequestHandler):
                 self._read_json()
                 from .updater import apply_update, check_update
                 info = check_update(force=True)
-                result = apply_update(info, paths.data_root())
-                self._send_json(result)
-                if result.get("ok"):
-                    _exit_soon()  # 响应发完后退出，让替换脚本接管
+                # 立即返回，下载与替换在后台线程进行，前端轮询 /api/update/progress
+                self._send_json(apply_update(info, paths.data_root()))
                 return
             if path == "/api/run":
                 payload = self._read_json()

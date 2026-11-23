@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -165,6 +166,32 @@ def clear_cache() -> None:
 # ---------------- 一键替换 ----------------
 MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024  # 远大于实际 11MB，防异常大文件
 
+# 更新进度（供面板轮询）。下载在后台线程进行，避免长请求把界面卡住，
+# 也让用户能看到百分比而不是干等。
+_progress: Dict[str, Any] = {
+    "phase": "idle",        # idle / downloading / verifying / replacing / restarting / error
+    "downloaded": 0,
+    "total": 0,
+    "latest": "",
+    "error": "",
+    "updated_at": 0.0,
+}
+_progress_lock = threading.Lock()
+_apply_lock = threading.Lock()
+_apply_thread: Optional[threading.Thread] = None
+
+
+def _set_progress(**kwargs: Any) -> None:
+    with _progress_lock:
+        _progress.update(kwargs)
+        _progress["updated_at"] = time.time()
+
+
+def download_progress() -> Dict[str, Any]:
+    """当前更新进度快照。"""
+    with _progress_lock:
+        return dict(_progress)
+
 
 def _is_allowed_download(url: str) -> bool:
     """只接受本仓库 releases 的下载地址，避免更新被指向任意地址。"""
@@ -182,20 +209,27 @@ def download_update(info: "UpdateInfo", dest_dir: Path) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     tmp = dest_dir / "CreditCheckin.download"
     final = dest_dir / "CreditCheckin.new.exe"
-    total = 0
+    downloaded = 0
     req = urllib.request.Request(url, headers={"User-Agent": "credit-checkin-updater"})
     with urllib.request.urlopen(req, timeout=60) as resp:
+        try:
+            declared = int(resp.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            declared = 0  # GitHub 走 302 跳转，个别情况下拿不到总长度
+        _set_progress(phase="downloading", downloaded=0, total=declared, error="")
         with tmp.open("wb") as fh:
             while True:
                 chunk = resp.read(64 * 1024)
                 if not chunk:
                     break
-                total += len(chunk)
-                if total > MAX_DOWNLOAD_BYTES:
+                downloaded += len(chunk)
+                if downloaded > MAX_DOWNLOAD_BYTES:
                     fh.close()
                     tmp.unlink(missing_ok=True)
                     raise RuntimeError("下载文件异常偏大，已中止")
                 fh.write(chunk)
+                _set_progress(downloaded=downloaded)
+    _set_progress(phase="verifying")
     with tmp.open("rb") as fh:
         magic = fh.read(2)
     if magic != b"MZ":  # 必须在关闭句柄后删除，否则 Windows 下报占用
@@ -263,28 +297,43 @@ exit /b 2
 
 
 def apply_update(info: "UpdateInfo", data_dir: Path) -> Dict[str, Any]:
-    """下载并安排替换。返回给前端的提示信息；调用方随后应让面板退出。"""
+    """启动后台更新流程并立即返回，进度通过 :func:`download_progress` 查询。
+
+    面板是 ThreadingHTTPServer，下载放到后台线程，前端才能轮询到进度；
+    否则长请求会让界面长时间无反馈，用户无法判断是卡住还是在下载。
+    """
     from . import paths
+    global _apply_thread
     if not paths.is_frozen():
         return {"ok": False, "message": "源码模式请用 git pull 更新，不支持自动替换"}
     if not info.has_update:
         return {"ok": False, "message": "当前已是最新版本"}
-    target = Path(sys.executable).resolve()
+    with _apply_lock:
+        if _apply_thread is not None and _apply_thread.is_alive():
+            return {"ok": False, "message": "更新正在进行中，请稍候"}
+        _apply_thread = threading.Thread(
+            target=_apply_worker, args=(info, Path(data_dir)), daemon=True)
+        _apply_thread.start()
+    return {"ok": True, "started": True, "latest": info.latest,
+            "message": f"开始下载 v{info.latest}…"}
+
+
+def _apply_worker(info: "UpdateInfo", data_dir: Path) -> None:
+    """后台流程：下载 → 校验 → 生成替换脚本 → 启动脚本 → 退出本进程。"""
     try:
-        new_file = download_update(info, Path(data_dir) / "update")
+        target = Path(sys.executable).resolve()
+        new_file = download_update(info, data_dir / "update")
         script = build_apply_script(target, new_file, os.getpid())
-    except Exception as exc:  # noqa: BLE001 - 把失败原因原样告诉用户
-        return {"ok": False, "message": f"更新准备失败：{exc}"}
-    try:
+        _set_progress(phase="replacing")
         # 直接 cmd /c 调用脚本，不要用 start：无控制台环境下 start 会挂起，
-        # 且会把空标题 "" 误当成要打开的文件（报「Windows 找不到 '\\' 文件」）。
-        # Popen 不等待，面板退出后 cmd 与脚本继续在后台完成替换。
+        # 且会把空标题 "" 误当成要打开的文件。Popen 不等待，退出后脚本继续跑。
         subprocess.Popen(
             ["cmd", "/c", str(script)],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             close_fds=True, cwd=str(script.parent),
         )
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "message": f"无法启动替换脚本：{exc}"}
-    return {"ok": True, "latest": info.latest,
-            "message": f"已下载 v{info.latest}，面板即将重启完成替换，请稍候…"}
+        _set_progress(phase="restarting")
+        time.sleep(1.2)  # 给前端留出读到最终状态并提示的时间
+        os._exit(0)
+    except Exception as exc:  # noqa: BLE001 - 把失败原因原样告诉用户
+        _set_progress(phase="error", error=str(exc))
