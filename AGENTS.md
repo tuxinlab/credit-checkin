@@ -72,7 +72,7 @@
 
 单文件 exe 用 PyInstaller 构建（`build.bat` → `main.py` → `checkin.__main__.entry()`）。有两处和源码模式不同，改动时务必留意：
 
-1. **路径分两类**（`checkin/paths.py`）：只读资源（contracts/、web/）打包后在 `sys._MEIPASS`，源码在仓库根；可写数据（config.json、data/、logs/）exe 模式写 exe 同目录，不可写时降级 `%LOCALAPPDATA%/CreditCheckin`，`CHECKIN_HOME` 优先级最高。`data_root()` 会随 CHECKIN_HOME 变化自动失效缓存。**其它模块不要再用 `__file__.parents[1]`**，统一走 paths。
+1. **路径分两类**（`checkin/paths.py`）：只读资源（contracts/、web/）打包后在 `sys._MEIPASS`，源码在仓库根；可写数据（config.json、data/、logs/）**exe 模式固定写 `%LOCALAPPDATA%/CreditCheckin`**（与 exe 位置无关），源码模式写仓库根，`CHECKIN_HOME` 优先级最高。`data_root()` 会随 CHECKIN_HOME 变化自动失效缓存。**其它模块不要再用 `__file__.parents[1]`**，统一走 paths。
 2. **计划任务指向 exe**（`manage.register_task()`）：`sys.frozen` 时注册 `exe路径 --run`，否则 `python -m checkin run`。exe 无参数=启动面板，`--run`=静默签到；`--noconsole` 下未捕获异常由 `_log_fatal()` 写进日志文件，否则用户看不到失败。
 
 打包后契约内置在 exe 里，改契约需重新构建；面板「契约状态」显示的契约版本来自内置副本。构建脚本已带官方 PyPI 源兜底（默认源可能没有 PyInstaller）。回归测试在 `tests/test_paths.py`。

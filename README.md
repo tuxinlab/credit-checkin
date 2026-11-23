@@ -60,9 +60,22 @@
 4. 在面板「账号配置」里添加账号 → 配置凭据 → 点「立即签到」试一次
 5. 点「开启每日自动签到」，之后每天自动执行，关掉面板也没关系
 
-首次双击会在 exe 旁边自动生成 `config.json` 和 `data\`（签到记录、加密凭据都在这里）。整个流程不需要 Python、不需要管理员权限、不写注册表——想卸载直接删掉 exe 和那两个文件即可。
+首次双击会在**系统用户目录**生成数据（不在 exe 旁边）：
 
-> ⚠️ **数据跟着 exe 走**：`config.json` 和 `data\` 始终在 exe 所在目录。**移动 exe 时一定要把这两个一起移走**，否则新位置会生成一套空白模板，看起来像"数据全没了"（实际数据还在原位置）。同理，若你在源码目录用过 `python -m checkin web`，数据在源码目录；改用 exe 时要让 exe 与那份数据同目录（或把数据复制到 exe 旁边）。
+```
+%LOCALAPPDATA%\CreditCheckin\
+├── config.json      账号与参数配置
+├── data\            签到记录、加密凭据（DPAPI 加密）
+└── logs\            运行日志
+```
+
+完整路径一般为 `C:\Users\你的用户名\AppData\Local\CreditCheckin`。
+
+**exe 放在哪里都不影响数据**——换文件夹、复制多份 exe，读写都是同一份。面板「契约状态 → 当前配置」里能看到实际路径。
+
+整个流程不需要 Python、不需要管理员权限、不写注册表。**卸载**：删掉 exe，再删掉上面那个 `CreditCheckin` 目录即可（如果注册过每日自动签到，先在面板里关掉）。
+
+> 从旧版本升级时，首次启动会自动把 exe 同目录的旧数据**复制**到用户目录（原文件保留，可自行清理）。
 
 > exe 有两套用法：**双击（无参数）= 打开面板**；被系统定时任务以 `--run` 调用 = 静默签到一次。高级用户也可以 `CreditCheckin.exe status` 这样用命令行子命令。
 
@@ -82,13 +95,13 @@ build.bat
 
 每次发新版：
 
-1. 改 `checkin/__init__.py` 里的 `__version__`（如 `0.1.1`）
+1. 改 `checkin/__init__.py` 里的 `__version__`（如 `0.1.3`）
 2. 跑 `build.bat` 重新构建（契约和前端内置在 exe 里，改了契约也必须重打包）
-3. 在 GitHub Releases 建一个 tag，格式 **`v0.1.1`**（`v` + 版本号），把 `dist\CreditCheckin.exe` 作为附件上传，写入更新说明
+3. 在 GitHub Releases 建一个 tag，格式 **`v0.1.3`**（`v` + 版本号），把 `dist_release\CreditCheckin.exe` 作为附件上传，写入更新说明
 
-用户那边的体验：**打开面板 → 「契约状态」标签页 → 自动显示"发现新版本"和下载链接**，点一下下载新 exe、覆盖旧文件即可。配置和签到记录都在同目录的 `config.json` / `data\` 里，**替换 exe 不会丢数据**。检查失败（没网、API 限流）会静默降级，不影响签到；也可以点「检查更新」按钮手动触发。
+用户那边的体验：**打开面板，右上角版本徽章会显示"发现新版本"**，点一下即可下载并自动替换、重启面板，账号配置和签到记录不受影响（数据在用户目录，与 exe 位置无关）。检查失败（没网、限流）会静默降级，不影响签到；点徽章也能手动触发检查。
 
-> 设计上只提示、不自动替换 exe：个人开源工具自动下载执行文件风险高、也容易被杀毒误报。用户手动点一下最稳妥。
+> 不会后台静默替换：必须用户点徽章确认。下载限定为本仓库的 Releases 地址并校验文件头，替换前备份旧 exe，失败自动回滚。
 
 ### 开发者 / 源码运行
 
@@ -110,9 +123,9 @@ python -m checkin init                # 生成 config.json + data/ logs/ 目录
 
 ### 方式 A：Web 面板（推荐，最适合日常使用）
 
-**Windows**：初始化后双击 `start.bat` 或 `启动面板.bat`，脚本会自动探测 Python、启动面板并打开浏览器；关掉窗口即停止。
+**Windows**：初始化后双击 `start.bat`，脚本会自动探测 Python、启动面板并打开浏览器；关掉窗口即停止。
 
-> **`start.bat` 和 `启动面板.bat` 的区别**：两者功能完全一样，都执行 `python -m checkin web --port 8765 --restart`，只是提示文字不同——`start.bat` 是英文输出，`启动面板.bat` 是中文输出。任选其一即可。`--restart` 会自动结束占用端口的旧面板进程，避免浏览器连到旧后端。两个脚本都**不会替你执行 `init`**，首次使用请先按上面完成初始化。
+> `start.bat` 执行 `python -m checkin web --port 8765 --restart`。`--restart` 会自动结束占用端口的旧面板进程，避免浏览器连到旧后端。它**不会替你执行 `init`**，首次使用请先按上面完成初始化。
 
 macOS / Linux 或想手动控制时，用命令行等价操作：
 
@@ -285,7 +298,7 @@ credit-checkin/
 ├── main.py                     PyInstaller 打包入口（源码运行用不到）
 ├── checkin/
 │   ├── __main__.py             程序入口：源码走 CLI，exe 走双模式
-│   ├── paths.py                路径层：区分内置资源与可写数据，兼容打包
+│   ├── paths.py                路径层：内置资源 / 固定数据目录 / 旧数据迁移
 │   ├── cli.py / config.py      命令行 / 配置加载与校验
 │   ├── models.py / storage.py  数据模型 / SQLite 存储
 │   ├── plan.py / executor.py   每日计划 / 重试与落库
@@ -295,6 +308,7 @@ credit-checkin/
 │   ├── autofill*.py            三平台本机凭据自动获取与 Qoder 设备授权
 │   ├── refresher.py            token 自动续期
 │   ├── notifier.py / utils.py  通知 / 时区与脱敏
+│   ├── updater.py              版本检查与一键替换
 │   ├── web.py                  本地 Web 面板后端（仅 127.0.0.1）
 │   └── adapters/               契约解析、HTTP 适配器、注册表
 ├── contracts/                  6 个真实接口契约（含来源标注与漂移规则）
@@ -303,11 +317,13 @@ credit-checkin/
 ├── contracts/README.md         契约格式与漂移处理指南
 ├── scripts/                    Windows 计划任务安装脚本
 ├── tests/                      unittest 测试（含真实响应样本与 Web API）
+├── images/                     README 截图
 ├── build.bat                   一键构建单文件 exe（PyInstaller）
-├── start.bat / 启动面板.bat     源码模式下双击启动面板
-├── dist/CreditCheckin.exe      构建产物（.gitignore）
-├── data/                       SQLite 数据库与加密凭据库（.gitignore）
+├── start.bat                   源码模式下双击启动面板
+├── dist_release/               构建产物（.gitignore）
+├── data/                       源码模式的数据库与凭据库（.gitignore）
 └── logs/                       运行日志（.gitignore）
+                                  （exe 模式下 data/ logs/ 位于 %LOCALAPPDATA%\CreditCheckin）
 ```
 
 
