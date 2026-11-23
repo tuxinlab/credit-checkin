@@ -52,6 +52,8 @@
 
 如果你只是想用，不想装 Python、不想碰命令行：
 
+![Credit Checkin 面板：今日概览、近 14 天积分趋势与各账号签到状态](images/panel.png)
+
 1. 拿到 `CreditCheckin.exe`（见下方"自己构建 exe"一节，或从 Releases 下载）
 2. 把它放到任意文件夹（**建议桌面或自建文件夹，不要放 `C:\Program Files`**）
 3. **双击打开**，浏览器会自动弹出操作面板
