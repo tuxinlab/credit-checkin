@@ -13,7 +13,14 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
 .wrap{max-width:1080px;margin:0 auto;padding:24px 20px 60px}
-header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px}
+.head-left{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.head-right{display:flex;align-items:center;gap:14px;font-size:12px}
+.ver-chip{border:1px solid var(--line);border-radius:20px;padding:3px 11px;background:#fff;color:var(--muted);cursor:pointer;white-space:nowrap}
+.ver-chip:hover{border-color:var(--accent);color:var(--accent)}
+.ver-chip.update{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+.gh-link{display:inline-flex;align-items:center;gap:5px;color:var(--muted);text-decoration:none}
+.gh-link:hover{color:var(--accent)}
 h1{font-size:20px;margin:0;font-weight:600}
 .meta{color:var(--muted);font-size:12px}
 .tabs{display:flex;gap:6px;margin:20px 0 16px;border-bottom:1px solid var(--line)}
@@ -67,8 +74,17 @@ pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12
 <body>
 <div class="wrap">
 <header>
-  <h1>Credit Checkin</h1>
-  <span class="meta" id="meta">连接到本机服务…</span>
+  <div class="head-left">
+    <h1>Credit Checkin</h1>
+    <span class="meta" id="meta">连接到本机服务…</span>
+  </div>
+  <div class="head-right">
+    <span class="ver-chip" id="ver-chip" title="正在检查版本…">v—</span>
+    <a class="gh-link" href="https://github.com/tuxinlab/credit-checkin" target="_blank" rel="noopener" title="GitHub 仓库：tuxinlab/credit-checkin">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </div>
 </header>
 
 <div id="notice"></div>
@@ -131,13 +147,6 @@ pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12
 </section>
 
 <section id="tab-contracts" hidden>
-  <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-      <h3 style="margin:0;font-size:14px">版本与更新</h3>
-      <button class="btn" id="btn-check-update" style="padding:4px 10px">检查更新</button>
-    </div>
-    <div id="version-box" class="meta">加载中…</div>
-  </div>
   <div class="card"><h3 style="margin:0 0 12px;font-size:14px">已加载契约</h3><div id="contract-table"></div></div>
   <div class="card">
     <h3 style="margin:0 0 12px;font-size:14px">当前配置</h3>
@@ -432,23 +441,30 @@ async function loadSchedule(){
 }
 
 async function loadVersion(force){
+  const chip=$('#ver-chip');
+  if(!chip)return;
+  if(force){chip.textContent='检查中…';chip.className='ver-chip';chip.onclick=null;}
   try{
     const v=await api('/api/version'+(force?'?force=1':''));
-    let html=`当前版本 <b>${esc(v.current)}</b>`;
+    chip.className='ver-chip';
     if(v.has_update){
-      html+=` · <span style="color:var(--accent)">发现新版本 ${esc(v.latest)}</span>`;
-      if(v.download_url)html+=` · <a href="${esc(v.download_url)}" target="_blank" style="color:var(--accent)">下载新版 exe</a>`;
-      if(v.notes)html+=`<div class="meta" style="margin-top:6px;white-space:pre-wrap">${esc(v.notes.slice(0,300))}</div>`;
-    }else if(v.latest){
-      html+=` · 已是最新版本（${esc(v.latest)}）`;
-    }else if(v.error){
-      html+=` · <span class="muted">暂无法检查更新（${esc(v.error)}），不影响签到</span>`;
+      chip.textContent='v'+v.current+' → 新版 v'+v.latest;
+      chip.classList.add('update');
+      chip.title='发现新版本 '+v.latest+'，点击下载'+(v.notes?'：'+v.notes.split('\n')[0]:'');
+      chip.onclick=()=>window.open(v.download_url||v.release_url,'_blank','noopener');
+    }else{
+      chip.textContent='v'+v.current;
+      chip.title=v.latest?('已是最新（'+v.latest+'），点击重新检查'):'点击检查更新';
+      chip.onclick=()=>loadVersion(true);
     }
-    $('#version-box').innerHTML=html;
-  }catch(e){$('#version-box').innerHTML=`<span class="muted">版本检查失败：${esc(e.message)}</span>`;}
+  }catch(e){
+    chip.textContent='v—';
+    chip.className='ver-chip';
+    chip.title='版本检查失败（不影响签到），点击重试';
+    chip.onclick=()=>loadVersion(true);
+  }
 }
 async function loadContracts(){
-  loadVersion(false).catch(()=>{});
   const c=await api('/api/contracts');
   let html=table(['平台','版本','名称','契约版本','状态','步骤数','说明'],c.items.map(x=>`<tr>
     <td>${esc(x.platform)}</td><td>${esc(x.version)}</td><td>${esc(x.name)}</td>
@@ -495,7 +511,6 @@ async function runCheckin(simulate){
 }
 
 $('#btn-add-account').onclick=showAddAccount;
-$('#btn-check-update').onclick=async(e)=>{const b=e.currentTarget;b.disabled=true;b.textContent='检查中…';await loadVersion(true).catch(()=>{});b.disabled=false;b.textContent='检查更新';};
 const LOADERS={overview:loadOverview,history:loadHistory,
   accounts:async()=>{await loadAccountConfig();await loadSchedule();},
   contracts:loadContracts,drifts:loadDrifts};
@@ -526,7 +541,7 @@ async function checkBackend(){
     return false;
   }
 }
-checkBackend().then(ok=>{ if(ok) loadOverview().catch(e=>{$('#notice').innerHTML=`<div class="banner err">连接失败：${esc(e.message)}</div>`}); });
+checkBackend().then(ok=>{ if(ok){ loadVersion(false).catch(()=>{}); loadOverview().catch(e=>{$('#notice').innerHTML=`<div class="banner err">连接失败：${esc(e.message)}</div>`}); } });
 setInterval(()=>{if(current==='overview'&&!$('#btn-run').disabled)loadOverview().catch(()=>{});},15000);</script>
 </body>
 </html>
