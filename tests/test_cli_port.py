@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
-from checkin.cli import _parse_netstat_pids
+from checkin.cli import _parse_netstat_pids, _panel_pids_on_port
 
 
 class ParseNetstatTests(unittest.TestCase):
@@ -27,6 +28,36 @@ class ParseNetstatTests(unittest.TestCase):
     def test_empty_and_malformed(self):
         self.assertEqual(_parse_netstat_pids("", 8765), set())
         self.assertEqual(_parse_netstat_pids("garbage line", 8765), set())
+
+
+class PanelIdentityTests(unittest.TestCase):
+    """_panel_pids_on_port 必须同时认 python 与 exe 两种启动方式，且不误杀他人。"""
+
+    NETSTAT = (
+        b"  TCP    127.0.0.1:8765         0.0.0.0:0              LISTENING       12345\r\n"
+    )
+
+    def _run(self, ps_output: bytes):
+        netstat = mock.Mock(stdout=self.NETSTAT)
+        shell = mock.Mock(stdout=ps_output)
+        with mock.patch("subprocess.run", side_effect=[netstat, shell]):
+            return _panel_pids_on_port(8765)
+
+    def test_recognizes_packaged_exe(self):
+        """打包后 cmdline 不含 -m checkin，靠进程名识别。"""
+        got = self._run(
+            b"CreditCheckin.exe|\"D:\\app\\CreditCheckin.exe\" \r\n")
+        self.assertEqual(got, {12345})
+
+    def test_recognizes_python_module(self):
+        got = self._run(
+            b"python.exe|python.exe -m checkin web --port 8765\r\n")
+        self.assertEqual(got, {12345})
+
+    def test_ignores_unrelated_listener(self):
+        """同端口的其它程序（如 node）绝不能被误杀。"""
+        got = self._run(b"node.exe|node server.js\r\n")
+        self.assertEqual(got, set())
 
 
 if __name__ == "__main__":

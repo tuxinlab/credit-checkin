@@ -444,21 +444,26 @@ def _panel_pids_on_port(port: int) -> set:
     pids = {p for p in _parse_netstat_pids(out, port) if p != os.getpid()}
     if not pids:
         return set()
-    # 通过 WMI 查命令行，只认带 "-m checkin" 的 Python 进程
+    # 通过 WMI 查进程名 + 命令行，只认本面板：python -m checkin web 或 CreditCheckin*.exe
     confirmed = set()
     for pid in pids:
         try:
             ps = (
                 f"$p=Get-CimInstance Win32_Process -Filter 'ProcessId={pid}' "
-                f"-ErrorAction SilentlyContinue; if($p){{Write-Output $p.CommandLine}}"
+                f"-ErrorAction SilentlyContinue; if($p){{Write-Output ($p.Name + '|' + $p.CommandLine)}}"
             )
             r = subprocess.run(
                 ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
                 capture_output=True, timeout=10,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            cmdline = (r.stdout or b"").decode("utf-8", "replace").strip()
-            if "-m checkin" in cmdline and "web" in cmdline:
-                confirmed.add(pid)
+            raw_line = (r.stdout or b"").decode("utf-8", "replace").strip()
+            name, _, cmdline = raw_line.partition("|")
+            name_l = name.strip().lower()
+            cmd_l = cmdline.strip().lower()
+            if "-m checkin" in cmd_l and "web" in cmd_l:
+                confirmed.add(pid)          # 源码模式：python -m checkin web
+            elif name_l.startswith("creditcheckin") and name_l.endswith(".exe"):
+                confirmed.add(pid)          # 打包模式：CreditCheckin.exe
         except Exception:
             continue  # 查不到身份就跳过，绝不误杀
     return confirmed
