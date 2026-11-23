@@ -16,6 +16,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -198,6 +199,46 @@ def _is_allowed_download(url: str) -> bool:
     return url.startswith(f"https://github.com/{GITHUB_REPO}/releases/download/")
 
 
+def _download_candidates(info: "UpdateInfo") -> list:
+    """候选下载地址。
+
+    Release 同时提供 ``CreditCheckin.exe``（固定名）和
+    ``CreditCheckin-<版本>.exe``（带版本号）两个附件；任一缺失时回退到另一个，
+    避免发版时漏传某个名字导致一键更新直接失败。
+    """
+    base = info.download_url
+    out = [base]
+    if base.endswith("/CreditCheckin.exe"):
+        prefix = base[: -len("CreditCheckin.exe")]
+        out.append(f"{prefix}CreditCheckin-{info.latest}.exe")
+    return list(dict.fromkeys(out))
+
+
+def _fetch_to_file(url: str, dest: Path) -> int:
+    """把 url 下载到 dest（同时上报进度），返回字节数。"""
+    downloaded = 0
+    req = urllib.request.Request(url, headers={"User-Agent": "credit-checkin-updater"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        try:
+            declared = int(resp.headers.get("Content-Length") or 0)
+        except (TypeError, ValueError):
+            declared = 0  # GitHub 走 302 跳转，个别情况下拿不到总长度
+        _set_progress(phase="downloading", downloaded=0, total=declared, error="")
+        with dest.open("wb") as fh:
+            while True:
+                chunk = resp.read(64 * 1024)
+                if not chunk:
+                    break
+                downloaded += len(chunk)
+                if downloaded > MAX_DOWNLOAD_BYTES:
+                    fh.close()
+                    dest.unlink(missing_ok=True)
+                    raise RuntimeError("下载文件异常偏大，已中止")
+                fh.write(chunk)
+                _set_progress(downloaded=downloaded)
+    return downloaded
+
+
 def download_update(info: "UpdateInfo", dest_dir: Path) -> Path:
     """下载新版本 exe 并校验 PE 文件头，返回落盘路径。"""
     url = info.download_url
@@ -209,26 +250,18 @@ def download_update(info: "UpdateInfo", dest_dir: Path) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     tmp = dest_dir / "CreditCheckin.download"
     final = dest_dir / "CreditCheckin.new.exe"
-    downloaded = 0
-    req = urllib.request.Request(url, headers={"User-Agent": "credit-checkin-updater"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+
+    for candidate in _download_candidates(info):
         try:
-            declared = int(resp.headers.get("Content-Length") or 0)
-        except (TypeError, ValueError):
-            declared = 0  # GitHub 走 302 跳转，个别情况下拿不到总长度
-        _set_progress(phase="downloading", downloaded=0, total=declared, error="")
-        with tmp.open("wb") as fh:
-            while True:
-                chunk = resp.read(64 * 1024)
-                if not chunk:
-                    break
-                downloaded += len(chunk)
-                if downloaded > MAX_DOWNLOAD_BYTES:
-                    fh.close()
-                    tmp.unlink(missing_ok=True)
-                    raise RuntimeError("下载文件异常偏大，已中止")
-                fh.write(chunk)
-                _set_progress(downloaded=downloaded)
+            _fetch_to_file(candidate, tmp)
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:  # 换另一种附件命名再试
+                continue
+            raise
+    else:
+        raise RuntimeError("下载失败：发布页找不到 exe 附件")
+
     _set_progress(phase="verifying")
     with tmp.open("rb") as fh:
         magic = fh.read(2)

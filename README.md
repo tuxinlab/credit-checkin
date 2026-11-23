@@ -54,7 +54,13 @@
 
 ![Credit Checkin 面板：今日概览、近 14 天积分趋势与各账号签到状态](images/panel.png)
 
-1. 拿到 `CreditCheckin.exe`（见下方"自己构建 exe"一节，或从 Releases 下载）
+1. 从 [最新发布页](https://github.com/tuxinlab/credit-checkin/releases/latest) 下载（页面永远指向最新版，别收藏旧版本链接）
+
+> 每个 Release 有两个附件，内容完全相同：
+> - `CreditCheckin-0.1.5.exe` —— 带版本号，**手动下载推荐这个**，一眼看出是哪版
+> - `CreditCheckin.exe` —— 固定名，程序内「一键更新」下载用
+>
+> exe 放到本地后建议改回 `CreditCheckin.exe` 或任意名字均可，数据按用户目录存放，与文件名无关。
 2. 把它放到任意文件夹（**建议桌面或自建文件夹，不要放 `C:\Program Files`**）
 3. **双击打开**，浏览器会自动弹出操作面板
 4. 在面板「账号配置」里添加账号 → 配置凭据 → 点「立即签到」试一次
@@ -97,7 +103,9 @@ build.bat
 
 1. 改 `checkin/__init__.py` 里的 `__version__`（如 `0.1.3`）
 2. 跑 `build.bat` 重新构建（契约和前端内置在 exe 里，改了契约也必须重打包）
-3. 在 GitHub Releases 建一个 tag，格式 **`v0.1.3`**（`v` + 版本号），把 `dist_release\CreditCheckin.exe` 作为附件上传，写入更新说明
+3. 在 GitHub Releases 建一个 tag，格式 **`v0.1.5`**（`v` + 版本号），上传**两个**附件并写更新说明：
+   - `dist_release\CreditCheckin.exe` 原名上传（程序内一键更新依赖这个固定名，缺了老版本用户会下载 404）
+   - 同一文件另存为 `CreditCheckin-0.1.5.exe` 一起上传（用户手动下载时能区分版本）
 
 用户那边的体验：**打开面板，右上角版本徽章会显示"发现新版本"**，点一下即可下载并自动替换、重启面板，账号配置和签到记录不受影响（数据在用户目录，与 exe 位置无关）。检查失败（没网、限流）会静默降级，不影响签到；点徽章也能手动触发检查。
 

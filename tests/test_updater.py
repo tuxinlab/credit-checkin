@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import json
 import unittest
+import urllib.error
 from unittest import mock
 
 import tempfile
@@ -167,6 +168,25 @@ class ApplyUpdateTests(unittest.TestCase):
             out = download_update(self._info(url), self.tmp)
         self.assertTrue(out.is_file())
         self.assertEqual(out.read_bytes()[:2], b"MZ")
+
+    def test_falls_back_to_versioned_asset_name(self):
+        """固定名 404 时（发版只传了带版本号的附件）应自动改用带版本名。"""
+        info = self._info(
+            f"https://github.com/{updater.GITHUB_REPO}/releases/download/v9.9.9/CreditCheckin.exe")
+        calls = []
+
+        def fake_urlopen(req, timeout=60):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            calls.append(url)
+            if url.endswith("/CreditCheckin.exe"):
+                raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+            return self._resp(b"MZ" + b"\x00" * 256)
+
+        with mock.patch.object(updater.urllib.request, "urlopen", side_effect=fake_urlopen):
+            out = download_update(info, self.tmp)
+        self.assertTrue(out.is_file())
+        self.assertTrue(calls[0].endswith("/CreditCheckin.exe"))
+        self.assertTrue(calls[1].endswith("/CreditCheckin-9.9.9.exe"))
 
     def test_apply_script_waits_and_rolls_back(self):
         """脚本必须：等进程退出、备份、覆盖、失败回滚。"""

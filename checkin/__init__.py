@@ -6,7 +6,7 @@ from .plan import build_daily_plan
 from .executor import Executor
 from .notifier import Notifier
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 __all__ = [
     "Account", "DailyTask", "RunRecord", "RunStatus", "Platform", "Version",
     "load_config", "Storage", "build_daily_plan", "Executor", "Notifier",
