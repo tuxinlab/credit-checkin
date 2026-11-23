@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from . import autofill
+
 STORAGE_KEY = "iCubeAuthInfo://icube.cloudide"
 
 # 与社区项目一致的公开 salt（AES key = sha512(sha512(random) xor salt)[0:16]）
@@ -71,6 +73,12 @@ def find_runtime() -> Optional[Path]:
     override = os.environ.get("TRAE_EXE", "").strip()
     if override and Path(override).is_file():
         return Path(override)
+
+    # 1) 运行中的进程路径：装在非系统盘也能找到
+    for proc_path in autofill.running_process_paths("Trae CN", "Trae"):
+        if proc_path.is_file() and "trae" in proc_path.name.lower():
+            return proc_path
+
     program_files = os.environ.get("ProgramFiles", "C:/Program Files")
     program_files_x86 = os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")
     candidates = [
@@ -81,6 +89,11 @@ def find_runtime() -> Optional[Path]:
     ]
     local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
     candidates.append(Path(local) / "Programs" / "Trae CN" / "Trae CN.exe")
+    # 2) 任意盘符的 Program Files
+    for root in autofill.drive_roots():
+        candidates.append(root / "Program Files" / "Trae CN" / "Trae CN.exe")
+        candidates.append(root / "Program Files" / "Trae" / "Trae.exe")
+
     for p in candidates:
         if p.is_file():
             return p

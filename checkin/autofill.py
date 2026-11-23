@@ -49,17 +49,18 @@ def find_auth_file() -> Optional[Path]:
     return None
 
 
-def _running_app_paths() -> list[Path]:
-    """查询正在运行的 WorkBuddy 进程可执行路径（Windows）。
+def running_process_paths(*names: str) -> list[Path]:
+    """查询正在运行的进程可执行路径（Windows）。
 
     用户可能把客户端装在任意盘符（如 D:\\Program Files\\workBuddy），
-    只枚举常见目录会漏掉，进程路径是最可靠的来源。
+    只枚举常见目录会漏掉，进程路径是最可靠的来源。names 为进程名。
     """
-    if sys.platform != "win32":
+    if sys.platform != "win32" or not names:
         return []
     try:
+        joined = ",".join(f"'{n}'" for n in names)  # 名字含空格（如 "Trae CN"）需要引号
         ps = ("$OutputEncoding=[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
-              "Get-Process -Name WorkBuddy -ErrorAction SilentlyContinue | "
+              f"Get-Process -Name {joined} -ErrorAction SilentlyContinue | "
               "ForEach-Object { $_.Path }")
         r = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
@@ -74,7 +75,7 @@ def _running_app_paths() -> list[Path]:
         return []
 
 
-def _drive_roots() -> list[Path]:
+def drive_roots() -> list[Path]:
     """可用盘符根目录，覆盖装在非系统盘的情况。"""
     roots = []
     for letter in string.ascii_uppercase:
@@ -94,7 +95,7 @@ def find_runtime() -> Optional[Path]:
         return Path(override)
 
     # 1) 运行中的进程路径：用户装在哪都能找到
-    for proc_path in _running_app_paths():
+    for proc_path in running_process_paths("WorkBuddy"):
         if proc_path.is_file() and "workbuddy" in proc_path.name.lower():
             return proc_path
 
@@ -109,7 +110,7 @@ def find_runtime() -> Optional[Path]:
         if base:
             candidates.append(Path(base) / "WorkBuddy" / "WorkBuddy.exe")
     # 3) 任意盘符的 Program Files（装在 D:/E: 的常见情况）
-    for root in _drive_roots():
+    for root in drive_roots():
         candidates.append(root / "Program Files" / "WorkBuddy" / "WorkBuddy.exe")
         candidates.append(root / "Program Files (x86)" / "WorkBuddy" / "WorkBuddy.exe")
 

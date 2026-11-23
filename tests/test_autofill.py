@@ -68,7 +68,7 @@ class FindRuntimeTests(unittest.TestCase):
     def test_prefers_running_process_path(self):
         fake = Path("D:/Program Files/workBuddy/WorkBuddy.exe")
         with mock.patch.dict("os.environ", {"WORKBUDDY_EXE": ""}), \
-             mock.patch.object(autofill, "_running_app_paths", return_value=[fake]), \
+             mock.patch.object(autofill, "running_process_paths", return_value=[fake]), \
              mock.patch.object(Path, "is_file", return_value=True):
             self.assertEqual(autofill.find_runtime(), fake)
 
@@ -85,16 +85,16 @@ class FindRuntimeTests(unittest.TestCase):
             return self.as_posix().lower() == target.as_posix().lower()
 
         with mock.patch.dict("os.environ", {"WORKBUDDY_EXE": ""}), \
-             mock.patch.object(autofill, "_running_app_paths", return_value=[]), \
-             mock.patch.object(autofill, "_drive_roots",
+             mock.patch.object(autofill, "running_process_paths", return_value=[]), \
+             mock.patch.object(autofill, "drive_roots",
                                return_value=[Path("C:/"), Path("D:/")]), \
              mock.patch.object(Path, "is_file", only_target_exists):
             self.assertEqual(autofill.find_runtime(), target)
 
     def test_returns_none_when_absent(self):
         with mock.patch.dict("os.environ", {"WORKBUDDY_EXE": ""}), \
-             mock.patch.object(autofill, "_running_app_paths", return_value=[]), \
-             mock.patch.object(autofill, "_drive_roots", return_value=[Path("C:/")]), \
+             mock.patch.object(autofill, "running_process_paths", return_value=[]), \
+             mock.patch.object(autofill, "drive_roots", return_value=[Path("C:/")]), \
              mock.patch.object(Path, "is_file", return_value=False):
             self.assertIsNone(autofill.find_runtime())
 
