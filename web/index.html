@@ -15,11 +15,12 @@ body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 -apple-system
 .wrap{max-width:1080px;margin:0 auto;padding:24px 20px 60px}
 header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px}
 .head-left{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
-.head-right{display:flex;align-items:center;gap:14px;font-size:12px}
-.ver-chip{border:1px solid var(--line);border-radius:20px;padding:3px 11px;background:#fff;color:var(--muted);cursor:pointer;white-space:nowrap}
-.ver-chip:hover{border-color:var(--accent);color:var(--accent)}
-.ver-chip.update{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
-.gh-link{display:inline-flex;align-items:center;gap:5px;color:var(--muted);text-decoration:none}
+.head-right{display:flex;align-items:center;gap:16px;font-size:13px}
+.ver-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:22px;padding:6px 16px;background:#fff;color:var(--muted);cursor:pointer;white-space:nowrap;font-size:13px;font-weight:500;line-height:1.4;transition:border-color .15s,background .15s,color .15s}
+.ver-chip:hover{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.ver-chip.update{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600;box-shadow:0 0 0 3px rgba(37,99,235,.08)}
+.ver-chip.checking{color:var(--muted);cursor:progress;opacity:.75}
+.gh-link{display:inline-flex;align-items:center;gap:6px;color:var(--muted);text-decoration:none;font-size:13px}
 .gh-link:hover{color:var(--accent)}
 h1{font-size:20px;margin:0;font-weight:600}
 .meta{color:var(--muted);font-size:12px}
@@ -60,7 +61,7 @@ details summary{cursor:pointer;color:var(--accent)}
 pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12px;overflow:auto;font-size:12px;max-height:260px}
 .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
-#toast{position:fixed;right:20px;bottom:20px;padding:12px 18px;border-radius:10px;background:#1f2430;color:#fff;font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+#toast{position:fixed;right:20px;bottom:24px;padding:13px 20px;border-radius:10px;background:#1f2430;color:#fff;font-size:13.5px;line-height:1.5;max-width:420px;box-shadow:0 6px 20px rgba(0,0,0,.18);opacity:0;transition:opacity .2s;pointer-events:none;z-index:99}
 #toast.show{opacity:1}
 .form-row{display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center;margin-bottom:10px}
 .form-row label{color:var(--muted);font-size:13px}
@@ -81,7 +82,7 @@ pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12
   <div class="head-right">
     <span class="ver-chip" id="ver-chip" title="正在检查版本…">v—</span>
     <a class="gh-link" href="https://github.com/tuxinlab/credit-checkin" target="_blank" rel="noopener" title="GitHub 仓库：tuxinlab/credit-checkin">
-      <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
       GitHub
     </a>
   </div>
@@ -185,7 +186,7 @@ let current='overview';
 let modalTimer=null;  // 设备授权轮询定时器，统一在 closeModal 里清理
 function stopPolling(){if(modalTimer){clearInterval(modalTimer);modalTimer=null;}}
 
-function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2600);}
+function toast(msg,ms=2600){const t=$('#toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),ms);}
 async function api(path,opts){const r=await fetch(path,opts);const d=await r.json();if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;}
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 // 供单引号包裹的 onclick 属性安全传参：先 JSON 序列化，再把单引号转成 HTML 实体，
@@ -443,7 +444,7 @@ async function loadSchedule(){
 async function loadVersion(force){
   const chip=$('#ver-chip');
   if(!chip)return;
-  if(force){chip.textContent='检查中…';chip.className='ver-chip';chip.onclick=null;}
+  if(force){chip.textContent='检查中…';chip.className='ver-chip checking';chip.onclick=null;}
   try{
     const v=await api('/api/version'+(force?'?force=1':''));
     chip.className='ver-chip';
@@ -452,16 +453,38 @@ async function loadVersion(force){
       chip.classList.add('update');
       chip.title='点击安装 v'+v.latest+'（面板会自动重启，数据不受影响）';
       chip.onclick=()=>applyUpdate(v.latest,v.release_url);
-    }else{
+      if(force)toast('发现新版本 v'+v.latest+'，点徽章即可更新',4000);
+    }else if(v.error){
       chip.textContent='v'+v.current;
-      chip.title=v.latest?('已是最新（'+v.latest+'），点击重新检查'):'点击检查更新';
+      chip.title='暂无法检查更新（'+v.error+'），点击重试';
       chip.onclick=()=>loadVersion(true);
+      if(force)toast('暂无法检查更新：'+v.error+'（不影响签到）',4500);
+    }else{
+      const ver=v.current;
+      chip.textContent='v'+ver;
+      chip.title='已是最新（线上 v'+v.latest+'），点击重新检查';
+      chip.onclick=()=>loadVersion(true);
+      if(force){
+        // 在徽章上直接给出结果，避免「点了没反应」的错觉
+        chip.textContent='✓ 已是最新';
+        chip.classList.add('update');
+        toast('已是最新版本 v'+ver+'（线上 v'+v.latest+'）',3800);
+        setTimeout(()=>{
+          if(chip.textContent==='✓ 已是最新'){
+            chip.textContent='v'+ver;
+            chip.className='ver-chip';
+            chip.title='已是最新（线上 v'+v.latest+'），点击重新检查';
+            chip.onclick=()=>loadVersion(true);
+          }
+        },2200);
+      }
     }
   }catch(e){
     chip.textContent='v—';
     chip.className='ver-chip';
     chip.title='版本检查失败（不影响签到），点击重试';
     chip.onclick=()=>loadVersion(true);
+    if(force)toast('检查更新失败：'+(e.message||'网络异常')+'（不影响签到）',4500);
   }
 }
 async function applyUpdate(latest,releaseUrl){
