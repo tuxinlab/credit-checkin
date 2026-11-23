@@ -213,6 +213,29 @@ class ApplyUpdateTests(unittest.TestCase):
         # 每行独立（之前 LF 导致 set 与 rem 拼成一行）
         self.assertNotIn('.bak"if', content)
 
+    def test_stale_apply_allows_retry(self):
+        """后台线程卡死（长时间无进度）时应允许重新发起，而不是永久「进行中」。"""
+        import threading as th
+        import time
+        from checkin import paths as paths_mod
+
+        stop = th.Event()
+        stuck = th.Thread(target=stop.wait, daemon=True)
+        stuck.start()
+        try:
+            with mock.patch.object(paths_mod, "is_frozen", return_value=True), \
+                 mock.patch.object(updater, "_apply_thread", stuck), \
+                 mock.patch.object(updater, "_apply_worker", return_value=None):
+                updater._set_progress(phase="downloading")
+                # _set_progress 会把 updated_at 刷成当前时间，这里再回拨成「很久没动」
+                with updater._progress_lock:
+                    updater._progress["updated_at"] = (
+                        time.time() - updater.APPLY_STALE_SECONDS - 10)
+                r = updater.apply_update(self._info("https://x/y.exe"), self.tmp)
+            self.assertTrue(r.get("started"))
+        finally:
+            stop.set()
+
     def test_apply_update_rejects_source_mode(self):
         """源码模式不支持自动替换，必须明确告知而不是静默失败。"""
         from checkin import paths as paths_mod

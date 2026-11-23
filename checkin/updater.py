@@ -166,6 +166,8 @@ def clear_cache() -> None:
 
 # ---------------- 一键替换 ----------------
 MAX_DOWNLOAD_BYTES = 150 * 1024 * 1024  # 远大于实际 11MB，防异常大文件
+DOWNLOAD_DEADLINE = 180                 # 下载总耗时上限（秒）
+APPLY_STALE_SECONDS = 180               # 更新无进度超过此时长即视为僵死，允许重新发起
 
 # 更新进度（供面板轮询）。下载在后台线程进行，避免长请求把界面卡住，
 # 也让用户能看到百分比而不是干等。
@@ -217,8 +219,10 @@ def _download_candidates(info: "UpdateInfo") -> list:
 def _fetch_to_file(url: str, dest: Path) -> int:
     """把 url 下载到 dest（同时上报进度），返回字节数。"""
     downloaded = 0
+    started = time.time()
     req = urllib.request.Request(url, headers={"User-Agent": "credit-checkin-updater"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    # 连接超时 30 秒；同时限制总耗时，避免网络极差时无限挂起、界面永远卡在「下载中」
+    with urllib.request.urlopen(req, timeout=30) as resp:
         try:
             declared = int(resp.headers.get("Content-Length") or 0)
         except (TypeError, ValueError):
@@ -226,6 +230,10 @@ def _fetch_to_file(url: str, dest: Path) -> int:
         _set_progress(phase="downloading", downloaded=0, total=declared, error="")
         with dest.open("wb") as fh:
             while True:
+                if time.time() - started > DOWNLOAD_DEADLINE:
+                    fh.close()
+                    dest.unlink(missing_ok=True)
+                    raise RuntimeError("下载超时（网络过慢），请稍后重试")
                 chunk = resp.read(64 * 1024)
                 if not chunk:
                     break
@@ -248,7 +256,8 @@ def download_update(info: "UpdateInfo", dest_dir: Path) -> Path:
         raise RuntimeError("下载地址不属于本仓库，已拒绝")
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
-    tmp = dest_dir / "CreditCheckin.download"
+    # 带时间戳：允许卡死重试时新旧下载并存，互不覆盖
+    tmp = dest_dir / f"CreditCheckin-{int(time.time() * 1000)}.download"
     final = dest_dir / "CreditCheckin.new.exe"
 
     for candidate in _download_candidates(info):
@@ -343,7 +352,13 @@ def apply_update(info: "UpdateInfo", data_dir: Path) -> Dict[str, Any]:
         return {"ok": False, "message": "当前已是最新版本"}
     with _apply_lock:
         if _apply_thread is not None and _apply_thread.is_alive():
-            return {"ok": False, "message": "更新正在进行中，请稍候"}
+            with _progress_lock:
+                idle = time.time() - _progress["updated_at"]
+            if idle < APPLY_STALE_SECONDS:
+                return {"ok": False,
+                        "message": "更新正在进行中，请稍候（若长时间无进度，请重启面板后再试）"}
+            # 后台线程卡死但没退出：允许重新发起，否则用户会被永久锁在「进行中」
+            _set_progress(phase="idle", downloaded=0, total=0, error="")
         _apply_thread = threading.Thread(
             target=_apply_worker, args=(info, Path(data_dir)), daemon=True)
         _apply_thread.start()

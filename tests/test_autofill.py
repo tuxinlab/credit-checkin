@@ -62,6 +62,23 @@ class AutofillTests(unittest.TestCase):
         )
 
 
+class OutputEncodingTests(unittest.TestCase):
+    """运行时输出是 UTF-8，必须按 UTF-8 解码，否则中文昵称会变成「鏈濋潰」乱码。"""
+
+    def test_chinese_nickname_decoded_as_utf8(self):
+        fake_auth = mock.Mock()
+        fake_auth.read_text.return_value = '{"auth":{"accessToken":{"$wbEncrypted":1,"envelope":"x"}}}'
+        payload = '{"ok":true,"token":"t","uid":"u","nickname":"喝口橙汁","phone":"133****4140"}'
+        fake_proc = mock.Mock(stdout=payload, stderr="", returncode=0)
+        with mock.patch.object(autofill, "find_auth_file", return_value=fake_auth), \
+             mock.patch.object(autofill, "find_runtime", return_value=Path("r")), \
+             mock.patch("subprocess.run", return_value=fake_proc) as run:
+            r = autofill.auto_detect()
+        self.assertEqual(run.call_args.kwargs.get("encoding"), "utf-8")
+        self.assertEqual(r["nickname"], "喝口橙汁")
+        self.assertEqual(r["phone"], "133****4140")
+
+
 class FindRuntimeTests(unittest.TestCase):
     """运行时探测：客户端装在非系统盘时也必须能找到（否则自动获取失效）。"""
 

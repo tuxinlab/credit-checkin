@@ -144,7 +144,9 @@ def _run_node(runtime: Path, js: str) -> Dict[str, Any]:
            if not k.upper().startswith(("NODE_", "ELECTRON_", "TRAE_"))}
     env["ELECTRON_RUN_AS_NODE"] = "1"
     try:
+        # Electron 运行时输出 UTF-8；Windows 下默认按 GBK 解码会让中文昵称乱码
         proc = subprocess.run([str(runtime), "-e", js], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
                               timeout=20, env=env,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except Exception as exc:

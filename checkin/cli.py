@@ -422,69 +422,123 @@ def _parse_netstat_pids(text: str, port: int) -> set:
     return pids
 
 
-def _panel_pids_on_port(port: int) -> set:
-    """找出监听端口、且确认是本面板进程的 PID。
+def _taskkill(pid: int) -> bool:
+    """强制结束进程，返回是否成功。"""
+    import subprocess
+    try:
+        r = subprocess.run(["taskkill", "/F", "/PID", str(pid)],
+                           capture_output=True, timeout=10,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return r.returncode == 0
+    except Exception:
+        return False
 
-    必须先确认进程身份再结束，绝不能按端口无差别 taskkill，否则会误杀
-    恰好占用该端口的其它开发服务。查不到命令行的进程一律保守跳过。
+
+def _pid_image_name(pid: int) -> str:
+    """用 tasklist 取进程映像名。
+
+    比查 WMI 命令行轻、在无控制台的打包环境也更稳。打包后进程名
+    ``CreditCheckin*.exe`` 已足够独特，可直接据此认定是本面板。
     """
     import subprocess
     try:
-        proc = subprocess.run(["netstat", "-ano"], capture_output=True, timeout=20)
+        r = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        out = (r.stdout or b"").decode("mbcs", "replace")
+        line = out.strip().splitlines()[0] if out.strip() else ""
+        return line.split(",")[0].strip().strip('"')
+    except Exception:
+        return ""
+
+
+def _pid_cmdline(pid: int) -> str:
+    """查进程命令行。仅对 python 这类通用进程名才需要，用来确认身份。"""
+    import subprocess
+    try:
+        ps = (f"$p=Get-CimInstance Win32_Process -Filter 'ProcessId={pid}' "
+              f"-ErrorAction SilentlyContinue; if($p){{Write-Output $p.CommandLine}}")
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            capture_output=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return (r.stdout or b"").decode("utf-8", "replace").strip()
+    except Exception:
+        return ""
+
+
+def _panel_pids_on_port(port: int) -> set:
+    """找出监听端口、且确认是本面板进程的 PID。
+
+    先看进程名（``CreditCheckin*.exe`` 足够独特，不必查命令行）；通用进程名
+    （如 python.exe）才核对命令行。绝不按端口无差别结束进程，避免误杀占用
+    同一端口的其它开发服务。
+    """
+    import subprocess
+    try:
+        proc = subprocess.run(["netstat", "-ano"], capture_output=True, timeout=20,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except Exception:
         return set()
     raw = proc.stdout or b""
     # 中文 Windows 的 netstat 输出是 GBK/MBCS，不能按 utf-8 解码
+    out = ""
     for enc in ("mbcs", "gbk", "utf-8"):
         try:
             out = raw.decode(enc)
             break
         except (UnicodeDecodeError, LookupError):
-            out = raw.decode("utf-8", errors="ignore")
+            continue
+    if not out:
+        out = raw.decode("utf-8", errors="ignore")
+
     pids = {p for p in _parse_netstat_pids(out, port) if p != os.getpid()}
-    if not pids:
-        return set()
-    # 通过 WMI 查进程名 + 命令行，只认本面板：python -m checkin web 或 CreditCheckin*.exe
     confirmed = set()
     for pid in pids:
-        try:
-            ps = (
-                f"$p=Get-CimInstance Win32_Process -Filter 'ProcessId={pid}' "
-                f"-ErrorAction SilentlyContinue; if($p){{Write-Output ($p.Name + '|' + $p.CommandLine)}}"
-            )
-            r = subprocess.run(
-                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
-                capture_output=True, timeout=10,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            raw_line = (r.stdout or b"").decode("utf-8", "replace").strip()
-            name, _, cmdline = raw_line.partition("|")
-            name_l = name.strip().lower()
-            cmd_l = cmdline.strip().lower()
-            if "-m checkin" in cmd_l and "web" in cmd_l:
-                confirmed.add(pid)          # 源码模式：python -m checkin web
-            elif name_l.startswith("creditcheckin") and name_l.endswith(".exe"):
-                confirmed.add(pid)          # 打包模式：CreditCheckin.exe
-        except Exception:
-            continue  # 查不到身份就跳过，绝不误杀
+        name = _pid_image_name(pid).lower()
+        if name.startswith("creditcheckin") and name.endswith(".exe"):
+            confirmed.add(pid)          # 打包模式：按名字即可确认
+            continue
+        cmd = _pid_cmdline(pid).lower()
+        if "-m checkin" in cmd and "web" in cmd:
+            confirmed.add(pid)          # 源码模式：python -m checkin web
     return confirmed
 
 
-def _kill_port_owner(port: int) -> int:
-    """结束监听指定端口、且确认为本面板的进程（仅 Windows）。返回结束数量。"""
+def _kill_port_owner(port: int, rounds: int = 3) -> int:
+    """结束监听端口且确认为本面板的进程，返回结束数量。
+
+    单次 taskkill 后端口未必立刻释放（onefile 的 bootloader 退出有滞后），
+    因此按轮次重试并轮询端口，直到真正空闲，避免新实例绑定失败后
+    浏览器仍连在旧进程上（表现为「装了新版却显示旧版本」）。
+    """
     if sys.platform != "win32":
         return 0
-    import subprocess
     killed = 0
-    for pid in _panel_pids_on_port(port):
-        try:
-            r = subprocess.run(["taskkill", "/F", "/PID", str(pid)],
-                               capture_output=True, timeout=10,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            if r.returncode == 0:
+    for _ in range(rounds):
+        pids = _panel_pids_on_port(port)
+        if not pids:
+            return killed
+        for pid in pids:
+            if _taskkill(pid):
                 killed += 1
-        except Exception:
-            pass
+        for _ in range(20):  # 最多等 10 秒
+            if not _port_in_use("127.0.0.1", port):
+                return killed
+            time.sleep(0.5)
     return killed
+
+
+def _alert(message: str, title: str = "Credit Checkin") -> None:
+    """打包成 exe 后没有控制台，print 用户看不到，改用系统弹窗说明失败原因。"""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)  # MB_ICONERROR
+    except Exception:
+        pass
 
 
 def cmd_web(args) -> int:
@@ -498,11 +552,16 @@ def cmd_web(args) -> int:
     if _port_in_use(host, port):
         if getattr(args, "restart", False):
             n = _kill_port_owner(port)
-            print(f"端口 {port} 被占用，已结束 {n} 个旧进程")
-            time.sleep(1.5)
-        else:
-            print(f"端口 {port} 已被占用：可能已有面板在运行。", file=sys.stderr)
-            print("请关闭旧面板窗口，或加 --restart 自动结束旧进程后再启动。", file=sys.stderr)
+            if n:
+                print(f"端口 {port} 被占用，已结束 {n} 个旧进程")
+        if _port_in_use(host, port):
+            # 仍被占用：可能旧进程迟迟不退出，或占用者是识别不出的其它程序。
+            # 绝不能静默失败——用户会以为打开了新版，实际浏览器连的还是旧进程。
+            msg = (f"端口 {port} 被占用，无法自动结束旧面板进程。\n\n"
+                   "请打开任务管理器，结束所有 CreditCheckin.exe 后重新打开本程序。\n"
+                   "（若该端口是其它软件在用，可换端口启动。）")
+            print(msg, file=sys.stderr)
+            _alert(msg)
             return 2
 
     ctx = _context(args)

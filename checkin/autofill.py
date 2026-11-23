@@ -252,7 +252,10 @@ def auto_detect() -> Dict[str, Any]:
     try:
         proc = subprocess.run(
             [str(runtime), "-e", script_js],
-            capture_output=True, text=True, timeout=20, env=env,
+            # Electron 运行时输出的是 UTF-8。必须显式指定编码：Windows 下 text=True
+            # 默认按 GBK(cp936) 解码，中文昵称会变成「鏈濋潰」这类乱码。
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=20, env=env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except Exception as exc:
