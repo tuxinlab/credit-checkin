@@ -18,6 +18,9 @@ from . import __version__
 
 # ---- 配置：用户开源后改成自己的 GitHub 仓库 ----
 GITHUB_REPO = "tuxinlab/credit-checkin"
+# 优先用 releases.atom（github.com 域名，不受 API 速率限制，无需认证）；
+# 匿名 API 每小时仅 60 次/IP，共享出口（公司/校园网）很容易撞限额。
+RELEASES_ATOM = "https://github.com/{repo}/releases.atom"
 RELEASES_API = "https://api.github.com/repos/{repo}/releases/latest"
 CHECK_INTERVAL_SECONDS = 3600  # 缓存 1 小时
 HTTP_TIMEOUT = 6
@@ -72,26 +75,68 @@ def _pick_asset(release: Dict[str, Any]) -> str:
     return str(release.get("html_url", "") or "")
 
 
+def _fetch_atom() -> UpdateInfo:
+    """从 releases.atom 解析最新版本。github.com 域名，不受 API 速率限制。"""
+    import xml.etree.ElementTree as ET
+    info = UpdateInfo(current=__version__, checked_at=time.time())
+    url = RELEASES_ATOM.format(repo=GITHUB_REPO)
+    req = urllib.request.Request(
+        url, headers={"Accept": "application/atom+xml",
+                      "User-Agent": "credit-checkin-updater"})
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        xml_bytes = resp.read()
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    root = ET.fromstring(xml_bytes)
+    entry = root.find("a:entry", ns)
+    if entry is None:
+        raise ValueError("feed 中没有 release")
+    link_el = entry.find("a:link", ns)
+    href = str(link_el.get("href", "")) if link_el is not None else ""
+    matched = re.search(r"/releases/tag/([^/]+)/?$", href)
+    if not matched:
+        raise ValueError("无法从 feed 解析 tag")
+    raw_tag = matched.group(1)
+    tag = raw_tag.lstrip("v")
+    info.latest = tag
+    info.release_url = href
+    info.download_url = (f"https://github.com/{GITHUB_REPO}"
+                         f"/releases/download/{raw_tag}/CreditCheckin.exe")
+    title_el = entry.find("a:title", ns)
+    info.notes = (title_el.text or "") if title_el is not None else ""
+    info.has_update = bool(tag) and _is_newer(tag, __version__)
+    return info
+
+
+def _fetch_api() -> UpdateInfo:
+    """GitHub Releases API（能拿到详细说明，但匿名请求有速率限制）。"""
+    info = UpdateInfo(current=__version__, checked_at=time.time())
+    url = RELEASES_API.format(repo=GITHUB_REPO)
+    req = urllib.request.Request(
+        url, headers={"Accept": "application/vnd.github+json",
+                      "User-Agent": "credit-checkin-updater"})
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        data = json.loads(resp.read().decode("utf-8", "replace"))
+    tag = str(data.get("tag_name", "") or "").lstrip("v")
+    info.latest = tag
+    info.release_url = str(data.get("html_url", "") or "")
+    info.download_url = _pick_asset(data)
+    info.notes = str(data.get("body", "") or "")
+    info.has_update = bool(tag) and _is_newer(tag, __version__)
+    return info
+
+
 def _fetch() -> UpdateInfo:
     info = UpdateInfo(current=__version__, checked_at=time.time())
     if not _configured():
         info.error = "未配置 GitHub 仓库地址"
         return info
-    url = RELEASES_API.format(repo=GITHUB_REPO)
-    try:
-        req = urllib.request.Request(
-            url, headers={"Accept": "application/vnd.github+json",
-                          "User-Agent": "credit-checkin-updater"})
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-            data = json.loads(resp.read().decode("utf-8", "replace"))
-        tag = str(data.get("tag_name", "") or "").lstrip("v")
-        info.latest = tag
-        info.release_url = str(data.get("html_url", "") or "")
-        info.download_url = _pick_asset(data)
-        info.notes = str(data.get("body", "") or "")
-        info.has_update = bool(tag) and _is_newer(tag, __version__)
-    except Exception as exc:  # 网络/API/解析失败一律静默降级
-        info.error = f"{type(exc).__name__}"
+    errors = []
+    for name, fetcher in (("atom", _fetch_atom), ("api", _fetch_api)):
+        try:
+            return fetcher()
+        except Exception as exc:  # 网络/限流/解析失败：换下一个，都失败则静默降级
+            errors.append(f"{name}:{type(exc).__name__}")
+    info.error = " / ".join(errors)
     return info
 
 

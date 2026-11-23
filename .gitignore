@@ -20,7 +20,9 @@ venv/
 
 # PyInstaller 构建产物
 build/
+build_release/
 dist/
+dist_release/
 *.spec
 
 # 编辑器 / 系统
