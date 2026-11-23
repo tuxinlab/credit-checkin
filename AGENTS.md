@@ -42,14 +42,31 @@
 
 `rule_match` / `_when_met` 的 `in`、`equals` 走 `match_any`（严格区分 bool 与数字），`truthy` 必须排除 `_MISSING`/`None`——缺失哨兵是 `object()`，直接 `bool()` 会误命中。改动见 `base.py` / `http.py`，回归测试在 `test_adapters.py`。
 
-### 更新检查：只提示不自动替换
+### 一键更新：替换 exe 的四个必踩坑
 
-`checkin/updater.py` 从 GitHub Releases API 读最新 tag 与本地 `__version__` 比对，Web 面板「契约状态」页显示更新提示和下载链接（`/api/version`）。**刻意不做自动下载替换**：开源个人工具自动执行下载文件风险高、易被杀毒误报。
+`updater.apply_update()` 下载新 exe 后生成 bat，由外部 cmd 在面板退出后完成替换（面板进程无法覆盖自己）。以下几点缺一不可：
 
-- 仓库地址是 `updater.GITHUB_REPO` 常量，当前为 `tuxinlab/credit-checkin`；**fork 后必须改成自己的**，否则会跟随原仓库版本。未配置时接口静默返回 error、不影响签到。
-- tag 格式必须是 `v` + 数字版本（`v0.1.1`），`_version_key` 只提取数字段比对。
-- 结果缓存 1 小时，面板轮询不会反复请求 GitHub；`?force=1` 或点「检查更新」按钮强制刷新。
-- 任何网络/API/解析失败都吞掉只记 error 字段，绝不抛异常到主流程。测试在 `tests/test_updater.py`。
+1. **bat 必须 CRLF**。用 `write_bytes(content.replace("\n", "\r\n").encode("mbcs", "replace"))`；写成 LF 会让 cmd 把多行拼成一行，脚本静默失效且极难察觉。
+2. **不要用 `start` 启动脚本**。无控制台环境下 `start "" /b` 会挂起，还会把空标题误当成文件（报「Windows 找不到 '\\' 文件」）。直接 `cmd /c <bat>` + `CREATE_NO_WINDOW` 即可，Popen 不等待，面板退出后脚本继续。
+3. **启动新 exe 前必须清除 PyInstaller 环境变量**：`_PYI_APPLICATION_HOME_DIR`、`_MEIPASS2`、`_PYI_ARCHIVE_FILE`、`_PYI_PARENT_PROCESS_LEVEL`、`_PYI_SPLASH_IPC`。否则新进程继承旧的 `_MEIxxxx` 解压目录，而该目录已被上一进程清理，启动即崩（`No such file or directory: _MEIxxxx`）。
+4. **用「能否 move 旧 exe」判断文件释放**，比查 PID 可靠：onefile 的 bootloader 可能在子进程退出后仍短暂持有句柄。
+
+下载侧：只接受 `https://github.com/{GITHUB_REPO}/releases/download/` 前缀，限 150MB，校验 `MZ` 头；**校验失败删除临时文件时必须先关闭句柄**，否则 Windows 报占用。
+
+### 数据目录固定（v0.1.2 起）
+
+打包后 `data_root()` 固定为 `%LOCALAPPDATA%/CreditCheckin`，**不再跟随 exe 位置**——否则用户移动 exe 就会看到一套空数据。首次启动由 `migrate_legacy_data()` 把 exe 同目录的旧数据复制过来（只复制不删除）。源码模式仍用仓库根。测试涉及 frozen 行为时必须隔离 `LOCALAPPDATA`，否则污染真实用户目录。
+
+### 更新检查：检查静默、替换必须用户确认
+
+`checkin/updater.py` 从 GitHub Releases 的 **atom feed** 读最新 tag 与 `__version__` 比对，右上角徽章显示状态（`/api/version`）。有新版时点击可一键下载替换，但**绝不后台静默替换**——必须用户点确认，且失败能回滚。
+
+- 优先用 `releases.atom`（`github.com` 域名，无 API 速率限制）；API 仅作回退补充说明。匿名 API 每小时仅 60 次/IP，共享出口极易 429。
+- 仓库地址是 `updater.GITHUB_REPO` 常量，当前 `tuxinlab/credit-checkin`；**fork 后必须改成自己的**。未配置时接口静默返回 error、不影响签到。
+- tag 格式必须是 `v` + 数字版本（`v0.1.2`），`_version_key` 只提取数字段比对。
+- 结果缓存 1 小时；前端页面加载 + 每 30 分钟各检查一次，`?force=1` 强制刷新。
+- 任何网络/解析失败都吞掉只记 error 字段，绝不抛异常到主流程。测试在 `tests/test_updater.py`。
+- **注意**：atom feed 有 CDN 缓存，发版后几分钟内仍读到旧 tag，容易误判"更新检查坏了"。
 
 ### 打包成 exe：路径与计划任务的特殊处理
 
