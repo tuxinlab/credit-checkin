@@ -215,6 +215,13 @@ def build_apply_script(target: Path, new_file: Path, pid: int) -> Path:
     # onefile 的 bootloader 可能在子进程退出后仍短暂持有文件句柄。
     content = f"""@echo off
 setlocal enabledelayedexpansion
+rem 清除 PyInstaller 运行时环境变量：新进程若继承旧的解压目录(_MEIxxxx)
+rem 会因该目录已被上一进程清理而启动失败
+set "_MEIPASS2="
+set "_PYI_APPLICATION_HOME_DIR="
+set "_PYI_ARCHIVE_FILE="
+set "_PYI_PARENT_PROCESS_LEVEL="
+set "_PYI_SPLASH_IPC="
 set "OLD={target}"
 set "NEW={new_file}"
 set "BAK={target}.bak"

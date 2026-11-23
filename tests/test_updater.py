@@ -187,6 +187,9 @@ class ApplyUpdateTests(unittest.TestCase):
         self.assertIn(":giveup", content)
         self.assertIn("move /y", content)
         self.assertIn('start "" "%OLD%"', content)
+        # 必须清除 PyInstaller 的 _MEI 环境变量，否则新进程继承已删除的解压目录会崩溃
+        self.assertIn("_PYI_APPLICATION_HOME_DIR=", content)
+        self.assertIn("_MEIPASS2=", content)
         # 每行独立（之前 LF 导致 set 与 rem 拼成一行）
         self.assertNotIn('.bak"if', content)
 
