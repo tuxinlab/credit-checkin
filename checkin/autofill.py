@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import re
+import string
 import subprocess
 import sys
 from pathlib import Path
@@ -48,33 +49,70 @@ def find_auth_file() -> Optional[Path]:
     return None
 
 
+def _running_app_paths() -> list[Path]:
+    """查询正在运行的 WorkBuddy 进程可执行路径（Windows）。
+
+    用户可能把客户端装在任意盘符（如 D:\\Program Files\\workBuddy），
+    只枚举常见目录会漏掉，进程路径是最可靠的来源。
+    """
+    if sys.platform != "win32":
+        return []
+    try:
+        ps = ("$OutputEncoding=[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+              "Get-Process -Name WorkBuddy -ErrorAction SilentlyContinue | "
+              "ForEach-Object { $_.Path }")
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        out = (r.stdout or b"").decode("utf-8", "replace")
+        paths = [Path(line.strip()) for line in out.splitlines()
+                 if line.strip().lower().endswith(".exe")]
+        # 客户端是多进程架构，同路径会重复，去重后返回
+        return list(dict.fromkeys(paths))
+    except Exception:
+        return []
+
+
+def _drive_roots() -> list[Path]:
+    """可用盘符根目录，覆盖装在非系统盘的情况。"""
+    roots = []
+    for letter in string.ascii_uppercase:
+        root = Path(f"{letter}:/")
+        try:
+            if root.exists():
+                roots.append(root)
+        except OSError:
+            continue
+    return roots
+
+
 def find_runtime() -> Optional[Path]:
     """探测 WorkBuddy 的 Electron 运行时 exe。"""
     override = os.environ.get("WORKBUDDY_EXE", "").strip()
     if override and Path(override).is_file():
         return Path(override)
-    # 先查运行中的进程（最可靠）
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            # 用 tasklist 免依赖
-            out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
-                                 capture_output=True, text=True, timeout=10).stdout
-            for line in out.splitlines():
-                if "workbuddy" in line.lower():
-                    # 进程路径需 wmic，改从常见目录找
-                    pass
-        except Exception:
-            pass
-    candidates = []
+
+    # 1) 运行中的进程路径：用户装在哪都能找到
+    for proc_path in _running_app_paths():
+        if proc_path.is_file() and "workbuddy" in proc_path.name.lower():
+            return proc_path
+
     local = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    program_files = os.environ.get("ProgramFiles", "C:/Program Files")
-    program_files_x86 = os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")
-    candidates += [
+    candidates = [
         Path(local) / "Programs" / "WorkBuddy" / "WorkBuddy.exe",
-        Path(program_files) / "WorkBuddy" / "WorkBuddy.exe",
-        Path(program_files_x86) / "WorkBuddy" / "WorkBuddy.exe",
+        Path(local) / "WorkBuddy" / "WorkBuddy.exe",
     ]
+    # 2) 当前进程可见的 Program Files
+    for env_name in ("ProgramFiles", "ProgramFiles(x86)"):
+        base = os.environ.get(env_name)
+        if base:
+            candidates.append(Path(base) / "WorkBuddy" / "WorkBuddy.exe")
+    # 3) 任意盘符的 Program Files（装在 D:/E: 的常见情况）
+    for root in _drive_roots():
+        candidates.append(root / "Program Files" / "WorkBuddy" / "WorkBuddy.exe")
+        candidates.append(root / "Program Files (x86)" / "WorkBuddy" / "WorkBuddy.exe")
+
     for p in candidates:
         if p.is_file():
             return p

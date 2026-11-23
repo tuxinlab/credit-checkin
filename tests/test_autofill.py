@@ -62,5 +62,42 @@ class AutofillTests(unittest.TestCase):
         )
 
 
+class FindRuntimeTests(unittest.TestCase):
+    """运行时探测：客户端装在非系统盘时也必须能找到（否则自动获取失效）。"""
+
+    def test_prefers_running_process_path(self):
+        fake = Path("D:/Program Files/workBuddy/WorkBuddy.exe")
+        with mock.patch.dict("os.environ", {"WORKBUDDY_EXE": ""}), \
+             mock.patch.object(autofill, "_running_app_paths", return_value=[fake]), \
+             mock.patch.object(Path, "is_file", return_value=True):
+            self.assertEqual(autofill.find_runtime(), fake)
+
+    def test_env_override_wins(self):
+        with mock.patch.dict("os.environ", {"WORKBUDDY_EXE": "C:/x/WorkBuddy.exe"}), \
+             mock.patch.object(Path, "is_file", return_value=True):
+            self.assertEqual(autofill.find_runtime(), Path("C:/x/WorkBuddy.exe"))
+
+    def test_falls_back_to_non_system_drive(self):
+        """没有运行中进程时，也要扫非系统盘的 Program Files。"""
+        target = Path("D:/Program Files/WorkBuddy/WorkBuddy.exe")
+
+        def only_target_exists(self):
+            return self.as_posix().lower() == target.as_posix().lower()
+
+        with mock.patch.dict("os.environ", {"WORKBUDDY_EXE": ""}), \
+             mock.patch.object(autofill, "_running_app_paths", return_value=[]), \
+             mock.patch.object(autofill, "_drive_roots",
+                               return_value=[Path("C:/"), Path("D:/")]), \
+             mock.patch.object(Path, "is_file", only_target_exists):
+            self.assertEqual(autofill.find_runtime(), target)
+
+    def test_returns_none_when_absent(self):
+        with mock.patch.dict("os.environ", {"WORKBUDDY_EXE": ""}), \
+             mock.patch.object(autofill, "_running_app_paths", return_value=[]), \
+             mock.patch.object(autofill, "_drive_roots", return_value=[Path("C:/")]), \
+             mock.patch.object(Path, "is_file", return_value=False):
+            self.assertIsNone(autofill.find_runtime())
+
+
 if __name__ == "__main__":
     unittest.main()
