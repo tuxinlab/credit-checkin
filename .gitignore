@@ -24,6 +24,7 @@ build_release/
 dist/
 dist_release/
 *.spec
+/CreditCheckin.exe
 
 # 编辑器 / 系统
 .vscode/
