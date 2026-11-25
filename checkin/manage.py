@@ -415,6 +415,62 @@ def task_status(task_name: str = "CreditCheckinDaily") -> Dict[str, Any]:
         return {"supported": True, "registered": False, "reason": f"{type(exc).__name__}: {exc}"}
 
 
+def task_action(task_name: str = "CreditCheckinDaily") -> Dict[str, Any]:
+    """读取计划任务实际执行的命令，用于识别「任务指向另一套程序」的情况。
+
+    源码模式注册的是 ``python -m checkin run``，exe 模式注册的是 ``exe --run``。
+    两者的数据目录不同（见 paths.data_root），混用会让签到写到面板看不到的库。
+    """
+    if sys.platform != "win32":
+        return {"supported": False, "registered": False}
+    try:
+        ps = (
+            f"$t=Get-ScheduledTask -TaskName '{task_name}' -ErrorAction SilentlyContinue; "
+            "if($t){$a=$t.Actions[0]; "
+            "Write-Output ('ACTION|'+$t.State+'|'+[string]$a.Execute+'|'+[string]$a.Arguments)} "
+            "else{Write-Output 'MISSING'}"
+        )
+        rc, out, err = _run_powershell(ps, timeout=20)
+        out = (out or "").strip()
+        if out.startswith("ACTION|"):
+            parts = out.split("|", 3)
+            return {"supported": True, "registered": True,
+                    "state": parts[1] if len(parts) > 1 else "",
+                    "execute": parts[2] if len(parts) > 2 else "",
+                    "arguments": parts[3] if len(parts) > 3 else ""}
+        return {"supported": True, "registered": False}
+    except Exception as exc:
+        return {"supported": True, "registered": False,
+                "reason": f"{type(exc).__name__}: {exc}"}
+
+
+def repair_scheduled_task(config_path: str | Path,
+                          task_name: str = "CreditCheckinDaily") -> Optional[Dict[str, str]]:
+    """exe 启动时自检：任务若仍指向旧程序，自动改回当前 exe。
+
+    典型来源：早期用源码注册过定时任务，后来改用 exe 面板。此时定时任务
+    写到仓库根的 data/checkin.db，面板读 %LOCALAPPDATA%/CreditCheckin，
+    表现为「实际领了，页面没记录」。只修复已存在且未禁用的任务，不新建任务。
+    """
+    from . import paths
+    if not paths.is_frozen() or sys.platform != "win32":
+        return None
+    info = task_action(task_name)
+    if not info.get("registered") or str(info.get("state", "")).lower() == "disabled":
+        return None
+    current = str(Path(sys.executable).resolve()).lower()
+    target = str(Path(str(info.get("execute") or "")).resolve()).lower() if info.get("execute") else ""
+    args = str(info.get("arguments") or "").strip().strip("\"'")
+    if target == current and args == "--run":
+        return None
+    schedule = get_schedule(read_raw(config_path))
+    register_task(Path(config_path).resolve().parent, schedule["time"],
+                  second_time=schedule["second_time"], task_name=task_name)
+    return {"old_execute": str(info.get("execute") or ""),
+            "old_arguments": str(info.get("arguments") or ""),
+            "new_execute": str(Path(sys.executable).resolve()), "new_arguments": "--run"}
+
+
 def register_task(project_root: str | Path, time_str: str,
                   task_name: str = "CreditCheckinDaily",
                   second_time: str = "") -> Dict[str, Any]:
@@ -462,7 +518,15 @@ Write-Output ("OK|"+$i.NextRunTime)
     out = (out or "").strip()
     err = (err or "").strip()
     if rc != 0 or not out.startswith("OK|"):
-        raise ManageError(f"注册计划任务失败: {(out or err)[:300]}")
+        detail = f"{out or ''} {err or ''}".strip()
+        low = detail.lower()
+        if any(k in low for k in ("拒绝访问", "access is denied", "permissiondenied", "0x80070005")):
+            raise ManageError(
+                "注册计划任务失败：Windows 拒绝访问（0x80070005），当前账号没有创建计划任务的权限。"
+                "请右键本程序选择「以管理员身份运行」后重试；公司电脑/标准用户若仍失败，"
+                "可让管理员在任务计划程序里手动创建（程序：CreditCheckin.exe，参数：--run，"
+                "每天 10:20 和 15:00 各触发一次），或联系 IT 放开任务计划权限。")
+        raise ManageError(f"注册计划任务失败: {detail[:300]}")
     return {"registered": True, "time": time_str,
             "next_run": out.split("|", 1)[1] if "|" in out else ""}
 

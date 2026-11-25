@@ -110,6 +110,8 @@ Trae Global 没有每日签到入口；WorkBuddy Global 定价页写的「每日
 
 ### Windows 计划任务
 
+- **注册失败要区分「权限」与「其它」**。`Register-ScheduledTask` 报 `PermissionDenied` / `0x80070005` 是 Windows 当前账号无权创建计划任务（公司策略、安全软件、非管理员），不是契约或签到逻辑问题；`manage.register_task()` 已把这类错误翻译成可操作提示（管理员运行 / 手动创建任务）。不要把这类错误吞掉或改成「注册成功」。
+- **定时任务必须和面板用同一套数据目录**。源码模式注册的是 `python -m checkin run`（写仓库根 `data/`），exe 模式注册的是 `exe --run`（写 `%LOCALAPPDATA%/CreditCheckin`）。若早期用源码注册过任务、后来改用 exe 面板，就会出现「平台实际领了、面板却显示没记录」——两个 SQLite 库各记各的。exe 面板启动时由 `manage.repair_scheduled_task()` 自检并把任务改回当前 exe（只改已存在且未禁用的任务）。排查此类问题先看任务实际命令（`Export-ScheduledTask`）和两份 `checkin.db` 的当日 runs，不要先怀疑签到接口。
 - `AtLogOn` 触发器在普通权限下会被拒绝访问，改用 `Daily` 触发器；主时间 10:20 + 可选兜底时间（面板 `second_time`，默认 15:00，清空则单触发）。
 - `InteractiveToken`（仅登录时运行）无法改成"不管用户是否登录都运行"而不保存密码，别在脚本里硬试；需要覆盖注销场景时用 `schedule` 守护模式。
 - PowerShell 在中文 Windows 输出 GBK，`manage._decode_console()` 按 utf-8 → gbk → mbcs 依次解码。

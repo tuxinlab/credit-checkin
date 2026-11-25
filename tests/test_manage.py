@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -190,6 +191,89 @@ class VaultIntegrationTests(unittest.TestCase):
         self.assertEqual(cred.token, "pt-from-vault-token")
         self.assertEqual(cred.source, "vault")
         self.assertEqual(cred.fields["uid"], "v1")
+
+
+class ScheduledTaskRepairTests(unittest.TestCase):
+    """定时任务指向源码 python 时，exe 面板必须能发现并修正。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.config = self.root / "config.json"
+        self.config.write_text(json.dumps(sample_config(), ensure_ascii=False), encoding="utf-8")
+        self._env = mock.patch.dict("os.environ", {"CHECKIN_HOME": str(self.root)})
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+        self.tmp.cleanup()
+
+    def test_permission_denied_gets_actionable_message(self):
+        """注册被 Windows 拒绝时给出可操作的提示，而不是一截英文异常。"""
+        with mock.patch("checkin.paths.is_frozen", return_value=True), \
+             mock.patch.object(manage, "_run_powershell", return_value=(
+                 1, "", "Register-ScheduledTask : 拒绝访问")):
+            with self.assertRaises(manage.ManageError) as ctx:
+                manage.register_task(self.root, "10:20")
+        msg = str(ctx.exception)
+        self.assertIn("0x80070005", msg)
+        self.assertIn("以管理员身份运行", msg)
+        self.assertIn("--run", msg)
+
+    def test_task_action_parses_execute_and_arguments(self):
+        with mock.patch.object(manage.sys, "platform", "win32"), \
+             mock.patch.object(manage, "_run_powershell", return_value=(
+                 0, "ACTION|Ready|C:\\Old\\CreditCheckin.exe|-m checkin run", "")):
+            info = manage.task_action()
+        self.assertTrue(info["registered"])
+        self.assertEqual(info["state"], "Ready")
+        self.assertEqual(info["execute"], "C:\\Old\\CreditCheckin.exe")
+        self.assertEqual(info["arguments"], "-m checkin run")
+
+    def test_repair_noop_in_source_mode(self):
+        """源码运行不修任务：源码面板本来就该用源码任务。"""
+        with mock.patch("checkin.paths.is_frozen", return_value=False), \
+             mock.patch.object(manage, "task_action") as action:
+            self.assertIsNone(manage.repair_scheduled_task(self.config))
+        action.assert_not_called()
+
+    def test_repair_repoints_legacy_source_task_to_exe(self):
+        manage.set_schedule(self.config, True, "10:20", second_time="15:00")
+        legacy = {"registered": True, "state": "Ready",
+                  "execute": "C:\\Python\\python.exe", "arguments": "-m checkin run"}
+        with mock.patch("checkin.paths.is_frozen", return_value=True), \
+             mock.patch.object(manage.sys, "platform", "win32"), \
+             mock.patch.object(manage, "task_action", return_value=legacy), \
+             mock.patch.object(manage, "register_task") as reg:
+            fixed = manage.repair_scheduled_task(self.config)
+        self.assertTrue(fixed)
+        self.assertEqual(fixed["old_arguments"], "-m checkin run")
+        reg.assert_called_once()
+        args, kwargs = reg.call_args
+        self.assertEqual(args[0], self.config.resolve().parent)
+        self.assertEqual(args[1], "10:20")
+        self.assertEqual(kwargs["second_time"], "15:00")
+
+    def test_repair_noop_when_already_current_exe(self):
+        current = str(Path(sys.executable).resolve())
+        ok = {"registered": True, "state": "Ready", "execute": current,
+              "arguments": "--run"}
+        with mock.patch("checkin.paths.is_frozen", return_value=True), \
+             mock.patch.object(manage.sys, "platform", "win32"), \
+             mock.patch.object(manage, "task_action", return_value=ok), \
+             mock.patch.object(manage, "register_task") as reg:
+            self.assertIsNone(manage.repair_scheduled_task(self.config))
+        reg.assert_not_called()
+
+    def test_repair_skips_disabled_or_missing_task(self):
+        for info in ({"registered": False},
+                     {"registered": True, "state": "Disabled", "execute": "x", "arguments": "y"}):
+            with mock.patch("checkin.paths.is_frozen", return_value=True), \
+                 mock.patch.object(manage.sys, "platform", "win32"), \
+                 mock.patch.object(manage, "task_action", return_value=info), \
+                 mock.patch.object(manage, "register_task") as reg:
+                self.assertIsNone(manage.repair_scheduled_task(self.config))
+            reg.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -567,6 +567,16 @@ def cmd_web(args) -> int:
     ctx = _context(args)
     if args.simulate:
         ctx["registry"].simulate = True
+    # exe 面板启动时修正「定时任务指向源码 python」的历史遗留问题，
+    # 否则签到写到另一个数据库，页面看起来像没签到。失败不影响面板启动。
+    if paths.is_frozen():
+        try:
+            from .manage import repair_scheduled_task
+            fixed = repair_scheduled_task(ctx["config_path"])
+            if fixed:
+                ctx["logger"].warning(f"已自动修正定时任务程序路径: {fixed}")
+        except Exception as exc:
+            ctx["logger"].warning(f"定时任务自检失败（不影响面板）: {exc}")
     try:
         server = create_server(ctx, host=host, port=port,
                                allow_local_decrypt=args.allow_local_decrypt)
