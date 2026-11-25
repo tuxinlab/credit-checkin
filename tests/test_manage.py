@@ -218,7 +218,8 @@ class ScheduledTaskRepairTests(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("0x80070005", msg)
         self.assertIn("以管理员身份运行", msg)
-        self.assertIn("--run", msg)
+        self.assertNotIn("联系 IT", msg)
+        self.assertNotIn("手动创建", msg)
 
     def test_task_action_parses_execute_and_arguments(self):
         with mock.patch.object(manage.sys, "platform", "win32"), \

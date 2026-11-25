@@ -68,6 +68,9 @@ pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12
 .form-row input,.form-row select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text)}
 .guide{background:var(--accent-soft);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:var(--accent)}
 .guide ol{margin:8px 0 0;padding-left:20px}
+.guide li{margin:4px 0}
+.guide .guide-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.btn.sm{padding:6px 11px;font-size:13px}
 .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
 @media(max-width:640px){.wrap{padding:16px 12px 40px}.msg{max-width:160px}.form-row{grid-template-columns:1fr}}
 </style>
@@ -99,6 +102,7 @@ pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12
 </div>
 
 <section id="tab-overview">
+  <div id="setup-guide"></div>
   <div class="stats" id="stats"></div>
   <div class="card">
     <div class="toolbar">
@@ -136,7 +140,7 @@ pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12
     </div>
     <div id="account-config-table"></div>
   </div>
-  <div class="card">
+  <div class="card" id="schedule-card">
     <h3 style="margin:0 0 12px;font-size:14px">每日自动签到</h3>
     <div id="schedule-box"></div>
   </div>
@@ -210,8 +214,31 @@ function renderRuns(runs,{withAttempts=false}={}){
   </tr>`));
 }
 
+function renderSetupGuide(accounts){
+  const list=Array.isArray(accounts)?accounts:[];
+  const ready=list.some(a=>(a.credential_source&&a.credential_source!=='none')||a.identity);
+  const box=$('#setup-guide');
+  if(!box)return;
+  if(ready){box.innerHTML='';return;}
+  box.innerHTML=`
+    <div class="guide">
+      <b>第一次使用？先做两件事</b>
+      <ol>
+        <li><b>配置账号：</b>点「账号配置」→ 添加账号 → 「配置凭据」，优先自动获取本机客户端登录态，也可手动粘贴 token。</li>
+        <li><b>开启自动签到：</b>在同一页面的「每日自动签到」里点「开启每日自动签到」。若提示<b>拒绝访问（0x80070005）</b>，关闭程序后右键 exe 选「以管理员身份运行」再试。</li>
+      </ol>
+      <div class="guide-actions">
+        <button class="btn primary sm" data-goto="accounts">去配置账号</button>
+        <button class="btn sm" data-goto="schedule">查看自动签到设置</button>
+      </div>
+    </div>`;
+  box.querySelectorAll('[data-goto]').forEach(b=>b.onclick=()=>activateTab(
+    'accounts', b.dataset.goto==='schedule'?'#schedule-card':null));
+}
+
 async function loadOverview(){
   const d=await api('/api/overview');
+  renderSetupGuide(d.accounts);
   $('#meta').textContent=`今日 ${d.today} · 时区 ${d.timezone} · 窗口 ${d.window.start}~${d.window.end}`;
   const s=d.stats;
   $('#stats').innerHTML=`
@@ -430,7 +457,8 @@ async function loadSchedule(){
       <button class="btn" id="s-save">仅保存时间</button>
       <button class="btn" id="s-save-general">保存窗口与时区</button>
     </div>
-    <p class="meta" style="margin-top:12px">开启后每天 10:20 和 15:00 各自动签到一次；当天已领过的自动跳过，不会重复领取。</p>`;
+    <p class="meta" style="margin-top:12px">开启后每天 10:20 和 15:00 各自动签到一次；当天已领过的自动跳过，不会重复领取。<br>
+      <b>第一次使用</b>：先在上方添加账号并配置凭据，再点「开启每日自动签到」。若提示「拒绝访问」，右键程序选「以管理员身份运行」后重试。</p>`;
   const t=()=>$('#s-time').value;
   if($('#s-save'))$('#s-save').onclick=async()=>{try{const d=await api('/api/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'save',enabled:$('#chk-sched-enabled')?.checked??true,time:t(),second_time:$('#s-time2').value})});toast(d.message);}catch(e){toast(e.message);}};
   if($('#s-save-general'))$('#s-save-general').onclick=async()=>{try{
@@ -624,13 +652,16 @@ $('#btn-add-account').onclick=showAddAccount;
 const LOADERS={overview:loadOverview,history:loadHistory,
   accounts:async()=>{await loadAccountConfig();await loadSchedule();},
   contracts:loadContracts,drifts:loadDrifts};
-document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
-  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));b.classList.add('active');
-  current=b.dataset.tab;
+function activateTab(name,scrollTo){
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
+  current=name;
   document.querySelectorAll('section').forEach(s=>s.hidden=true);
-  $('#tab-'+current).hidden=false;
-  (LOADERS[current]||loadOverview)().catch(e=>toast(e.message));
-}));
+  const section=$('#tab-'+name);
+  if(section)section.hidden=false;
+  if(scrollTo){const el=$(scrollTo);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});}
+  (LOADERS[name]||loadOverview)().catch(e=>toast(e.message));
+}
+document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>activateTab(b.dataset.tab)));
 $('#btn-run').onclick=()=>runCheckin(false);
 $('#btn-simulate').onclick=()=>runCheckin(true);
 $('#btn-refresh-history').onclick=()=>loadHistory().catch(e=>toast(e.message));

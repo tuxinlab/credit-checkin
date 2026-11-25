@@ -46,7 +46,8 @@ class WebTests(unittest.TestCase):
         self.assertTrue(page.is_file(), "面板页面必须存在")
         html = page.read_text(encoding="utf-8")
         for key in ("今日概览", "执行历史", "账号配置", "契约状态", "异常与漂移",
-                    "/api/run", "/api/account", "/api/credential", "/api/schedule"):
+                    "/api/run", "/api/account", "/api/credential", "/api/schedule",
+                    "第一次使用", "以管理员身份运行", "setup-guide", "schedule-card"):
             self.assertIn(key, html)
 
     def test_overview_shape_and_masking(self):

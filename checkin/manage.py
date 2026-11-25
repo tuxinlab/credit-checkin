@@ -522,10 +522,8 @@ Write-Output ("OK|"+$i.NextRunTime)
         low = detail.lower()
         if any(k in low for k in ("拒绝访问", "access is denied", "permissiondenied", "0x80070005")):
             raise ManageError(
-                "注册计划任务失败：Windows 拒绝访问（0x80070005），当前账号没有创建计划任务的权限。"
-                "请右键本程序选择「以管理员身份运行」后重试；公司电脑/标准用户若仍失败，"
-                "可让管理员在任务计划程序里手动创建（程序：CreditCheckin.exe，参数：--run，"
-                "每天 10:20 和 15:00 各触发一次），或联系 IT 放开任务计划权限。")
+                "注册计划任务失败：Windows 拒绝访问（0x80070005）。"
+                "请关闭程序后右键 exe 选「以管理员身份运行」，再点一次「开启每日自动签到」。")
         raise ManageError(f"注册计划任务失败: {detail[:300]}")
     return {"registered": True, "time": time_str,
             "next_run": out.split("|", 1)[1] if "|" in out else ""}
