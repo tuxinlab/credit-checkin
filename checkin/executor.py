@@ -185,31 +185,43 @@ class Executor:
                     return finish(task, RunStatus.DRIFT.value, attempt,
                                         message=outcome.message, detail=last_detail, drift=True)
 
-                # 鉴权类确定性失败：先尝试自动续期（每轮一次），成功则用新凭据重试
+                # 鉴权类确定性失败：先自动恢复凭据（每轮一次），成功则用新凭据重试。
+                # 恢复顺序：本机客户端登录态 → refresh_token 续期 → 标记需页面授权。
                 if (outcome.status == RunStatus.FAILED.value
                         and outcome.retryable is False
                         and outcome.auth_failure
                         and not refreshed and not simulate
                         and attempt < self.max_attempts):
                     refreshed = True
-                    ok, note = self.refresher.refresh(account, cred)
+                    # 优先用分级恢复；兼容只有 refresh() 的自定义替身
+                    recover_fn = getattr(self.refresher, "recover", None)
+                    ok, note = (recover_fn(account, cred) if recover_fn
+                                else self.refresher.refresh(account, cred))
                     if ok:
-                        self.logger.info(f"{task.key} token 已自动续期，用新凭据重试: {note}")
+                        self.logger.info(f"{task.key} 凭据已自动恢复，用新凭据重试: {note}")
                         new_token = getattr(self.refresher, "last_token", None)
+                        new_fields = getattr(self.refresher, "last_fields", None)
                         if new_token:
-                            # 直接用续期返回的新 token 替换内存凭据。不要重新 resolve()：
+                            # 直接用恢复返回的新 token 替换内存凭据。不要重新 resolve()：
                             # 当凭据来自环境变量时，环境变量优先级高于保险库，
-                            # 重新解析会拿回旧的过期 token，导致本次续期白做。
+                            # 重新解析会拿回旧的过期 token，导致本次恢复白做。
                             cred.token = new_token
-                            cred.source = "refreshed"
+                            cred.source = "recovered"
                             cred_dict["token"] = new_token
+                            if new_fields:
+                                cred.fields.update(new_fields)
+                                cred_dict["fields"] = cred.fields
                         else:
                             # 兼容自定义 refresher（如测试替身）未暴露 last_token 的情况
                             cred = resolve_credential(account, allow_local_decrypt=allow_local_decrypt)
                             cred_dict = {"token": cred.token, "fields": cred.fields,
                                          "headers": cred.headers}
                         continue
-                    self.logger.warning(f"{task.key} 自动续期失败: {note}；请重新配置凭据")
+                    # 恢复失败：Qoder 需要页面授权的信号透给面板，由前端拉起授权弹窗
+                    if getattr(self.refresher, "need_login", False):
+                        last_detail = dict(last_detail)
+                        last_detail["need_login"] = True
+                    self.logger.warning(f"{task.key} 自动恢复凭据失败: {note}；请重新配置凭据")
 
                 # 确定性失败（如凭据失效）：重试无意义，立即收尾并提示用户处理
                 if outcome.status == RunStatus.FAILED.value and not outcome.retryable:

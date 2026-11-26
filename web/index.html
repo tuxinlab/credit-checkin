@@ -316,6 +316,39 @@ async function showAddAccount(){
   };
 }
 
+// Qoder 设备授权登录（本机没有登录态/凭据过期时用）；成功后可选回调（如重试签到）
+async function openQoderAuth(acc,onDone){
+  let session='',polling=false;
+  try{
+    const s=await api('/api/qoder/login/start?region='+encodeURIComponent(acc.version==='global'?'global':'cn'));
+    session=s.session;
+    openModal('设备授权登录 · '+acc.id,`
+      <div class="guide"><b>请在打开的浏览器页面确认授权</b><br>
+       <a href="${esc(s.auth_url)}" target="_blank" style="color:var(--accent)">没弹出？点这里打开授权页</a><br>
+       <span class="meta">确认后点下方按钮，或等待自动检测。授权成功后凭据会自动保存。</span></div>
+      <div class="actions"><button class="btn" onclick="closeModal()">取消</button>
+       <button class="btn primary" id="qa-poll">我已授权，获取凭据</button></div>`);
+    window.open(s.auth_url,'_blank');
+    $('#qa-poll').onclick=doPoll;
+    stopPolling();
+    modalTimer=setInterval(doPoll,5000);
+  }catch(e){toast('发起授权失败：'+e.message);}
+  async function doPoll(){
+    if(!session||polling)return;
+    polling=true;
+    try{
+      const d=await api('/api/qoder/login/poll?session='+encodeURIComponent(session)+'&id='+encodeURIComponent(acc.id)+'&version='+encodeURIComponent(acc.version));
+      if(d.pending)return;
+      stopPolling();
+      toast(d.message||'凭据已获取');
+      closeModal();
+      await loadAccountConfig();await loadOverview();
+      if(onDone)await onDone();
+    }catch(e){toast(e.message);}
+    finally{polling=false;}
+  }
+}
+
 async function showCredential(acc){
   let guide={title:`${acc.platform}.${acc.version}`,steps:[],fields:[]};
   try{guide=await api('/api/guide?platform='+encodeURIComponent(acc.platform));}catch(e){}
@@ -349,36 +382,7 @@ async function showCredential(acc){
     }catch(e){toast('自动获取失败：'+e.message);b.disabled=false;b.textContent=autoLabel;}
   };
   // Qoder 备选：设备授权登录（本机没有登录态时用）
-  if(devBtn&&$('#cf-device')){
-    let session='',polling=false;
-    $('#cf-device').onclick=async()=>{
-      const b=$('#cf-device');b.disabled=true;b.textContent='发起授权…';
-      try{
-        const s=await api('/api/qoder/login/start?region='+encodeURIComponent(acc.version==='global'?'global':'cn'));
-        session=s.session;
-        window.open(s.auth_url,'_blank');
-        $('#modal-body').insertAdjacentHTML('afterbegin',
-          `<div class="guide"><b>请在打开的浏览器页面确认授权</b><br>
-           <a href="${esc(s.auth_url)}" target="_blank" style="color:var(--accent)">没弹出？点这里打开授权页</a><br>
-           <span class="meta">确认后点下方按钮，或等待自动检测。</span></div>`);
-        b.textContent='我已授权，获取凭据';b.disabled=false;
-        b.onclick=doPoll;
-        stopPolling();
-        modalTimer=setInterval(doPoll,5000);
-      }catch(e){toast('发起授权失败：'+e.message);b.disabled=false;b.textContent='设备授权登录';}
-    };
-    async function doPoll(){
-      if(!session||polling)return;
-      polling=true;
-      try{
-        const d=await api('/api/qoder/login/poll?session='+encodeURIComponent(session)+'&id='+encodeURIComponent(acc.id)+'&version='+encodeURIComponent(acc.version));
-        if(d.pending)return;
-        stopPolling();
-        await afterAuto(d.message);
-      }catch(e){toast(e.message);}
-      finally{polling=false;}
-    }
-  }
+  if(devBtn&&$('#cf-device'))$('#cf-device').onclick=()=>openQoderAuth(acc);
   $('#cf-save').onclick=async()=>{
     const token=$('#cf-token').value.trim();
     if(!token){toast('请先粘贴 token');return;}
@@ -679,6 +683,24 @@ async function runCheckin(simulate){
     $('#run-result').innerHTML=`<div class="${d.ok?'banner info':'banner warn'}">${esc(d.message)}</div>`+renderRuns(d.records);
     toast(d.message);
     await loadOverview();
+    // 凭据过期且本机/续期都失败：自动拉起 Qoder 设备授权，成功后重试该账号
+    const need=(d.records||[]).find(r=>r.need_login&&r.status==='failed');
+    if(need&&!simulate){
+      const accs=(await api('/api/accounts')).items||[];
+      const acc=accs.find(a=>a.id===need.account_id&&a.platform===need.platform);
+      if(acc&&acc.platform==='qoder'){
+        toast(acc.id+' 凭据已过期，请在弹出的页面重新授权');
+        await openQoderAuth(acc,async()=>{
+          try{
+            const r=await api('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({simulate:false,force:true,platform:acc.platform,version:acc.version,account_id:acc.id})});
+            toast(r.message);
+            $('#run-result').innerHTML=`<div class="${r.ok?'banner info':'banner warn'}">授权后重试：${esc(r.message)}</div>`+renderRuns(r.records);
+            await loadOverview();
+          }catch(err){toast('重试失败：'+err.message);}
+        });
+      }
+    }
   }catch(e){$('#run-result').innerHTML=`<div class="banner err">${esc(e.message)}</div>`;toast('执行失败');}
   finally{btn.disabled=false;btn.innerHTML=old;}
 }

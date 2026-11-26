@@ -46,6 +46,11 @@ class TokenRefresher:
         # 最近一次续期拿到的新 token。执行器用它在本次进程内直接替换凭据，
         # 避免"环境变量优先于保险库"时重新解析又拿回旧 token 导致续期白做。
         self.last_token: Optional[str] = None
+        # 最近一次恢复后是否需要「页面登录授权」（Qoder 本机与刷新都失败时为 True）。
+        # 计划任务无人值守时只能记录该信号；面板签到时前端会据此拉起授权弹窗。
+        self.need_login: bool = False
+        # 本机获取同时拿到的新字段（device_id/uid 等），执行器需在本次进程内合并进凭据
+        self.last_fields: Optional[Dict[str, Any]] = None
 
     # ---------- 工具 ----------
     def _post(self, url: str, headers: Dict[str, str], payload: Dict[str, Any],
@@ -116,6 +121,77 @@ class TokenRefresher:
         if not token:
             return None, None, "续期响应缺少 access token"
         return token, new_refresh, "ok"
+
+    # ---------- 本机自动获取 ----------
+    def _local_detect(self, account: Account) -> Tuple[Optional[str], Optional[str], Dict[str, Any], str]:
+        """从本机客户端登录态重新取凭据，返回 (token, refresh_token, fields, note)。
+
+        本机一直登录过客户端时这是最可靠的来源：token 由客户端自己续期，
+        保险库里存的可能是旧的。字段尽量保留原凭据里的（如 Qoder 设备身份）。
+        """
+        platform = account.platform
+        try:
+            if platform == "workbuddy":
+                from .autofill import auto_detect
+                result = auto_detect()
+            elif platform == "trae":
+                from .autofill_trae import auto_detect
+                result = auto_detect()
+            elif platform == "qoder":
+                from .autofill_qoder_local import auto_detect
+                result = auto_detect(account.version or "cn")
+            else:
+                return None, None, {}, f"平台 {platform} 不支持本机获取"
+        except Exception as exc:
+            return None, None, {}, f"本机获取异常: {type(exc).__name__}"
+
+        if not result.get("ok") or not result.get("token"):
+            return None, None, {}, f"本机未取到新凭据: {result.get('error') or '未知原因'}"
+
+        token = str(result["token"])
+        refresh = str(result.get("refresh_token") or "")
+        fields: Dict[str, Any] = {}
+        for key in ("uid", "user_id", "domain", "device_id", "account_name",
+                    "phone", "email", "uin", "endpoint"):
+            if result.get(key):
+                fields[key] = result[key]
+        return token, refresh, fields, f"已从{platform}本机客户端重新获取凭据"
+
+    # ---------- 统一恢复入口 ----------
+    def recover(self, account: Account, cred: Any) -> Tuple[bool, str]:
+        """凭据失效后的分级恢复：本机获取 → refresh_token 续期 → 标记需页面授权。
+
+        与 refresh() 的区别：refresh() 只做协议续期（保留兼容性），
+        recover() 是先试本机登录态（用户本机常登录，token 更新），失败再续期。
+        成功后 ``last_token`` 记下新 token，executor 直接用它替换内存凭据。
+        """
+        self.last_token = None
+        self.last_fields = None
+        self.need_login = False
+        platform = account.platform
+
+        # 第一级：本机自动获取（Trae/Qoder/WorkBuddy 都支持）
+        token, refresh, fields, note = self._local_detect(account)
+        if token:
+            merged = dict(cred.fields or {})
+            merged.update(fields)
+            self._save(account, token, merged, refresh or "")
+            self.last_token = token
+            self.last_fields = fields
+            return True, note
+
+        local_note = note
+
+        # 第二级：refresh_token 协议续期（Trae ExchangeToken / Qoder deviceToken/refresh）
+        ok, refresh_note = self.refresh(account, cred)
+        if ok:
+            return True, refresh_note
+
+        # 第三级：Qoder 有页面登录授权渠道，标记让前端弹窗；其它平台只能提示重新配置
+        if platform == "qoder":
+            self.need_login = True
+            return False, f"{local_note}；{refresh_note}；请在页面用「设备授权登录」重新认证"
+        return False, f"{local_note}；{refresh_note}"
 
     # ---------- 入口 ----------
     def refresh(self, account: Account, cred: Any) -> Tuple[bool, str]:

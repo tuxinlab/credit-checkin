@@ -56,6 +56,8 @@ class WebTests(unittest.TestCase):
         self.assertNotIn('id="quota-box"', accounts, "账号配置页不应再有单独的额度卡片")
         self.assertNotIn('id="stats"', html, "概览页顶部的统计卡片应已移除")
         self.assertNotIn('今日任务', html, "概览页不应再显示统计卡片文案")
+        self.assertIn('openQoderAuth', html, "凭据过期应能拉起 Qoder 设备授权")
+        self.assertIn('need_login', html, "前端应处理需页面授权信号")
 
     def test_overview_shape_and_masking(self):
         with tempfile.TemporaryDirectory() as td:

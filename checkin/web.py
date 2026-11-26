@@ -193,6 +193,13 @@ def _run_overview(state: WebState) -> Dict[str, Any]:
 
 
 def _serialize_run(r) -> Dict[str, Any]:
+    need_login = False
+    if r.detail:
+        try:
+            d = json.loads(r.detail) if isinstance(r.detail, str) else r.detail
+            need_login = bool(d.get("need_login"))
+        except Exception:
+            pass
     return {
         "key": r.key,
         "account_id": r.account_id,
@@ -206,6 +213,7 @@ def _serialize_run(r) -> Dict[str, Any]:
         "started_at": r.started_at,
         "finished_at": r.finished_at,
         "message": r.message,
+        "need_login": need_login,
     }
 
 

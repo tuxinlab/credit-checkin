@@ -92,6 +92,15 @@ Web 面板是多线程，`config.json` 的每次"读→改→写"都必须是原
 
 正确做法：`TokenRefresher.last_token` 记录了本次续期拿到的新 token，执行器直接用它覆盖内存里的 `cred_dict["token"]`（见 `executor.py` 的 `auth_failure` 分支）。`tests/test_executor.py::test_refresh_uses_new_token_even_when_credential_from_env` 是这条的回归测试，改动续期链路时务必保留。
 
+### 凭据过期的分级恢复：本机优先，Qoder 最后走页面授权
+
+鉴权失败时执行器调 `TokenRefresher.recover()`（不是 `refresh()`，后者只做协议续期、保留兼容）：
+1. **本机客户端登录态优先**：用户本机一直登录着客户端，保险库里的 token 反而可能是旧的。Trae 用 `autofill_trae.auto_detect()`、Qoder 用 `autofill_qoder_local.auto_detect(version)`、WorkBuddy 用 `autofill.auto_detect()`。`recover()` 拿到新 token 和字段（device_id/uid 等）写回保险库，同时记到 `last_token` / `last_fields`，执行器直接用它们替换内存凭据（**同样不能重新 resolve()**）。
+2. **refresh_token 协议续期兜底**：本机没取到才用 `refresh()` 的 deviceToken/ExchangeToken 续期。
+3. **Qoder 仍失败 → 页面授权**：`recover()` 置 `need_login=True`，执行器把它作为布尔字段写进 `runs.detail`（**用布尔，不要用含 credential 字样的字符串键**，否则被 `sanitize()` 脱敏成 `<redacted>`，前端读不到）。`/api/run` 序列化出 `need_login`，前端 `runCheckin()` 检测到失败记录带该标记就调 `openQoderAuth()` 拉起设备授权弹窗，授权成功后自动 force 重跑该账号。计划任务 `--run` 无人值守，只能把这个信号留在记录里，用户下次打开面板时看到。
+
+注意 `need_login` 信号只在 `attempt < max_attempts` 的恢复分支里产生；`max_attempts=1` 时不触发恢复（不阻塞快速失败语义）。回归测试：`test_local_recovery_then_retry_uses_new_token_and_fields`、`test_need_login_signal_when_all_recovery_fails`、`test_recover_prefers_local_over_refresh_token`、`test_recover_qoder_local_then_refresh_then_need_login`。
+
 ### Qoder Global：401 不能被当成"没活动"
 
 早期 `verdicts` 没覆盖 401，失败被记成 `skipped`，看起来像"今天没活动"。现在契约里显式加了 `fatal` / `auth` 规则：明确提示凭据失效，先尝试 `refresher.py` 的 deviceToken 续期再重试一次。排障时先看 `python -m checkin errors` 的原始响应，别只看当日状态。

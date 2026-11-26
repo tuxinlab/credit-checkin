@@ -100,6 +100,47 @@ class RefresherTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("refresh_token", note)
 
+    def test_recover_prefers_local_over_refresh_token(self):
+        """Trae 凭据过期：本机一直登录过，优先用本机新凭据，而不是旧 refresh_token。"""
+        import checkin.autofill_trae as mod
+        http, calls = make_http([])  # 本机成功时不应走任何续期请求
+        with mock.patch.object(mod, "auto_detect", return_value={
+                "ok": True, "token": "trae-local-new", "refresh_token": "rt-local",
+                "device_id": "dev-local", "user_id": "u1"}):
+            r = TokenRefresher(http_fn=http, vault=self.vault)
+            ok, note = r.recover(self._account(), self._cred())
+        self.assertTrue(ok, note)
+        self.assertEqual(calls, [], "本机拿到新凭据就不该再走 refresh_token 续期")
+        self.assertEqual(self.vault.saved["token"], "trae-local-new")
+        self.assertEqual(self.vault.saved["secrets"]["refresh_token"], "rt-local")
+        self.assertEqual(r.last_token, "trae-local-new")
+        self.assertEqual(r.last_fields["device_id"], "dev-local")
+
+    def test_recover_qoder_local_then_refresh_then_need_login(self):
+        """Qoder: 本机失败 → refresh_token 续期；两者都失败时标记需页面授权。"""
+        import checkin.autofill_qoder_local as qmod
+        # 第一段：本机失败，refresh_token 成功
+        http, calls = make_http([
+            (200, json.dumps({"data": {"device_token": "dt-rt", "refresh_token": "drt-new"}})),
+        ])
+        with mock.patch.object(qmod, "auto_detect", return_value={
+                "ok": False, "error": "未找到登录态"}):
+            r = TokenRefresher(http_fn=http, vault=self.vault)
+            ok, note = r.recover(self._account("qoder", "cn"), self._cred("drt-old"))
+        self.assertTrue(ok, note)
+        self.assertFalse(r.need_login)
+        self.assertEqual(self.vault.saved["token"], "dt-rt")
+
+        # 第二段：本机失败且续期也失败 → 需要页面授权
+        http2, _ = make_http([(401, '{"error":"invalid"}')])
+        with mock.patch.object(qmod, "auto_detect", return_value={
+                "ok": False, "error": "未找到登录态"}):
+            r2 = TokenRefresher(http_fn=http2, vault=self.vault)
+            ok2, note2 = r2.recover(self._account("qoder", "global"), self._cred("drt-dead"))
+        self.assertFalse(ok2)
+        self.assertTrue(r2.need_login, "Qoder 全部自动手段失败后应标记需页面授权")
+        self.assertIn("授权", note2)
+
     def test_workbuddy_refresh_reruns_local_decrypt(self):
         from checkin import autofill
         with mock.patch.object(autofill, "auto_detect",

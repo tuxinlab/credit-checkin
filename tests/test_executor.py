@@ -322,5 +322,75 @@ class ExecutorTests(unittest.TestCase):
         self.assertEqual(self.storage.runs_for_date(task.target_date.isoformat()), [])
 
 
+    def _auth_contract(self, version="cn", platform="trae"):
+        """构造一个把 TOKEN_EXPIRE 判为 fatal/auth 失败、随后可成功的契约。"""
+        c = json.loads(json.dumps(CONTRACT))
+        c.update({"platform": platform, "version": version, "contract_version": "v2"})
+        c["auth"] = {"type": "header", "header": "Authorization",
+                     "prefix": "Bearer ", "headers": {
+                         "Authorization": "Bearer ${token}",
+                         "x-device-id": "${cred.device_id}"}}
+        c["response"]["expected_shape"] = {
+            "type": "object", "required_paths": ["$.code"], "field_types": {}}
+        c["response"]["verdicts"] = [{
+            "status": "failed", "fatal": True, "auth": True, "steps": ["checkin"],
+            "message": "凭据已失效",
+            "match": {"$.code": {"in": ["TOKEN_EXPIRE"]}},
+        }, {
+            "status": "success", "steps": ["checkin"], "message": "领取成功",
+            "credits_path": "$.data.points",
+            "match": {"$.code": {"equals": [0]}},
+        }]
+        return c
+
+    def test_local_recovery_then_retry_uses_new_token_and_fields(self):
+        """凭据过期 → 本机自动获取 → 用新 token 和新字段重试成功。"""
+        from unittest import mock
+        from checkin import autofill_trae
+        (self.root / "contracts" / "trae.cn.json").write_text(
+            json.dumps(self._auth_contract()), encoding="utf-8")
+        auth_headers = []
+
+        def http(method, url, headers, body, timeout):
+            auth_headers.append(dict(headers))
+            if len(auth_headers) == 1:
+                return 401, json.dumps({"code": "TOKEN_EXPIRE"})
+            return 200, json.dumps({"code": 0, "data": {"points": 100}})
+
+        with mock.patch.object(autofill_trae, "auto_detect", return_value={
+                "ok": True, "token": "LOCAL-NEW", "refresh_token": "rt-new",
+                "device_id": "dev-new"}):
+            rec = self._executor(http).run_task(DailyTask("trae", "cn", "t1", TODAY))
+
+        self.assertEqual(rec.status, RunStatus.SUCCESS.value)
+        self.assertEqual(len(auth_headers), 2, "恢复后应重试一次")
+        self.assertIn("LOCAL-NEW", auth_headers[1].get("Authorization", ""),
+                      "重试必须用本机新凭据")
+        self.assertEqual(auth_headers[1].get("x-device-id"), "dev-new",
+                         "本机新字段 device_id 必须带进重试请求")
+
+    def test_need_login_signal_when_all_recovery_fails(self):
+        """Qoder 本机与续期都失败：记录里带 need_login，供面板弹授权窗。"""
+        from unittest import mock
+        import checkin.autofill_qoder_local as qmod
+        contract = self._auth_contract("global", platform="qoder")
+        (self.root / "contracts" / "qoder.global.json").write_text(
+            json.dumps(contract), encoding="utf-8")
+        self.cfg["accounts"].append(
+            Account(id="q1", platform="qoder", version="global", credential="tok"))
+
+        def http(method, url, headers, body, timeout):
+            return 401, json.dumps({"code": "TOKEN_EXPIRE"})
+
+        with mock.patch.object(qmod, "auto_detect", return_value={
+                "ok": False, "error": "未找到登录态"}):
+            executor = self._executor(http)
+            rec = executor.run_task(DailyTask("qoder", "global", "q1", TODAY))
+
+        self.assertEqual(rec.status, RunStatus.FAILED.value)
+        self.assertIn("need_login", (rec.detail or ""),
+                      "Qoder 全部自动恢复失败后应透出页面授权信号")
+
+
 if __name__ == "__main__":
     unittest.main()
