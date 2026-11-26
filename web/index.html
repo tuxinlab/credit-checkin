@@ -419,7 +419,7 @@ async function loadQuota(force=false){
     const d=await api('/api/quota'+(force?'?force=1':''));
     const rows=(d.items||[]).map(q=>`<tr>
       <td>${esc(q.account_id)}${q.platform?`<div class="meta">${esc(q.platform)}.${esc(q.version)}</div>`:''}</td>
-      <td>${esc(q.plan||'-')}</td>
+      <td>${q.ok?esc(q.plan||'-'):`<span class="meta qerr" title="${esc(q.reason||'')}">${esc(q.reason||'-')}</span>`}</td>
       <td>${quotaCell(q)}</td>
       <td>${expiryCell(q)}</td>
       <td class="meta">${q.queried_at?esc(q.queried_at.slice(5,16)):'-'}</td>

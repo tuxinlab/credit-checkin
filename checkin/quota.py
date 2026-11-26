@@ -27,7 +27,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from .credentials import resolve as resolve_credential
-from .models import Account
+from .models import Account, UNSUPPORTED_VERSIONS
 
 CACHE_TTL = 300  # 5 分钟，与 cc-switch 一致
 _BEIJING = timezone(timedelta(hours=8))
@@ -431,6 +431,10 @@ def _fetch_one(account: Account, allow_local_decrypt: bool) -> QuotaInfo:
         queried_at=time.time(),
     )
     try:
+        # 没有签到活动的版本（如 WorkBuddy/Trae 国际版）不查额度：
+        # 它们的凭据往往就是国内账号那份，拿国内接口查会把国内额度错显示成国际版的。
+        if (account.platform, account.version) in UNSUPPORTED_VERSIONS:
+            raise RuntimeError("该版本无签到活动，不查询额度")
         cred = resolve_credential(account, allow_local_decrypt=allow_local_decrypt)
         if not cred.token:
             raise RuntimeError("未配置凭据，请先到「账号配置」获取")

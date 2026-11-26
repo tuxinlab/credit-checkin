@@ -216,6 +216,16 @@ class CacheAndFetchTests(unittest.TestCase):
         self.assertIn("凭据文件损坏", info.reason)
         self.assertIsNone(info.remaining)
 
+    def test_unsupported_version_skips_domestic_quota(self):
+        """国际版没有签到活动，且凭据常是国内账号那份，不能拿国内额度冒充。"""
+        info = quota._fetch_one(_account("workbuddy", "global", "wb-gl-01"), allow_local_decrypt=False)
+        self.assertFalse(info.ok)
+        self.assertIsNone(info.remaining)
+        self.assertIn("无签到活动", info.reason)
+        info2 = quota._fetch_one(_account("trae", "global", "trae-gl-01"), allow_local_decrypt=False)
+        self.assertFalse(info2.ok)
+        self.assertIn("无签到活动", info2.reason)
+
     def test_missing_token_reason(self):
         with mock.patch.object(quota, "resolve_credential", return_value=Credential(token="")):
             info = quota._fetch_one(_account(), False)
