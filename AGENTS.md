@@ -107,7 +107,7 @@ Web 面板是多线程，`config.json` 的每次"读→改→写"都必须是原
 
 ### WorkBuddy / Trae 国际版：根本没有签到活动
 
-Trae Global 没有每日签到入口；WorkBuddy Global 定价页写的「每日活跃奖励 30 积分/天」是按使用自动发放，无法手动领取。两者在 `models.UNSUPPORTED_VERSIONS` 中强制禁用，`config.load_config()` 与 `manage.set_account_enabled()` 都会拒绝启用——**不要为了"让界面能点"而删掉这层保护**。
+Trae Global 没有每日签到入口；WorkBuddy Global 定价页写的「每日活跃奖励 30 积分/天」是按使用自动发放，无法手动领取。两者在 `models.UNSUPPORTED_VERSIONS` 中强制禁用，`config.load_config()` 与 `manage.set_account_enabled()` 都会拒绝启用——**不要为了"让界面能点"而删掉这层保护**。额度查询虽然与签到接口独立，但国际版额度接口经实测也不可用（WorkBuddy Global 没有可配置国际网关、Trae Global 网关返回 404），最终按版本跳过查询、显示中性「未提供活动签到」，不要把它显示成红色报错。
 
 ### Web 面板：旧后端进程导致新按钮 404
 
@@ -130,12 +130,13 @@ Trae Global 没有每日签到入口；WorkBuddy Global 定价页写的「每日
 ### 账号额度/到期查询（checkin/quota.py）
 
 - 三个平台的额度接口都在签到契约之外，单独放在 `quota.py`，**只读 POST**，绝不碰签到/登录/续期接口：
-  - WorkBuddy：`POST {endpoint}/billing/meter/get-user-resource-summary`（`endpoint` 默认 `copilot.tencent.com`），再从返回的 `Packages[].PackageCode` 决定查 `get-user-resource-free-packages` 还是 `paid-packages` 拿到期。**必须带契约同款头**：`Authorization: Bearer {token}` + `X-User-Id` + `X-Domain`；企业号再带 `X-Enterprise-Id`/`X-Tenant-Id` 并优先走 `get-enterprise-user-usage`。**`TotalCredits` 名字骗人，它其实是剩余积分**（等于 `CreditGroups[].CycleRemainCapacity` 之和）；总额必须汇总 `Packages[].CycleTotalCapacity`（或 `CreditGroups[].CycleTotalCapacity`），否则会显示成 `2038.28 / 2038.28` 这种错误比例。
-  - Trae：`POST api.trae.cn/trae/api/v2/pay/web_user_ent_usage`，头 `Cloud-IDE-JWT {token}` + `x-device-id`。**实测真实响应没有 `code`/`remainingCredits` 这些字段**：剩余是 `total_balance`（或 `balance_summary[].total_balance`），总额是 `usage_summary.total_amount`，已用是 `usage_summary.consumed_amount`，到期在 `user_entitlement_pack_list[].entitlement_base_info.end_time`（**秒级**时间戳，不是毫秒）。只认旧字段名会误报「额度接口未返回可识别的积分字段」。
+  - WorkBuddy：`POST {endpoint}/billing/meter/get-user-resource-summary`（CN 默认 `copilot.tencent.com`；**Global 不补这个默认值**，必须由凭据里的 `endpoint` 指定，否则提示填写，绝不能拿国内网关冒充国际版额度），再从返回的 `Packages[].PackageCode` 决定查 `get-user-resource-free-packages` 还是 `paid-packages` 拿到期。**必须带契约同款头**：`Authorization: Bearer {token}` + `X-User-Id` + `X-Domain`；企业号再带 `X-Enterprise-Id`/`X-Tenant-Id` 并优先走 `get-enterprise-user-usage`。**`TotalCredits` 名字骗人，它其实是剩余积分**（等于 `CreditGroups[].CycleRemainCapacity` 之和）；总额必须汇总 `Packages[].CycleTotalCapacity`（或 `CreditGroups[].CycleTotalCapacity`），否则会显示成 `2038.28 / 2038.28` 这种错误比例。
+  - Trae：`POST {gateway}/trae/api/v2/pay/web_user_ent_usage`，CN 网关 `api.trae.cn`，Global 网关 `api.trae.com`（凭据里填了 `endpoint` 则以填写值为准）；头 `Cloud-IDE-JWT {token}` + `x-device-id`，CN 才带 `X-User-Region: CN`。**实测真实响应没有 `code`/`remainingCredits` 这些字段**：剩余是 `total_balance`（或 `balance_summary[].total_balance`），总额是 `usage_summary.total_amount`，已用是 `usage_summary.consumed_amount`，到期在 `user_entitlement_pack_list[].entitlement_base_info.end_time`（**秒级**时间戳，不是毫秒）。只认旧字段名会误报「额度接口未返回可识别的积分字段」。
   - Qoder：`POST openapi.qoder.com.cn/api/v2/quota/usage`（国际版 `.sh`），剩余 = `userQuota.remaining + addOnQuota.remaining`，总额 = 两者 `total` 之和；`expiresAt=253402214400000` 是「永不过期」占位，不要显示。
 - **不要再复刻 cc-switch 的 WBIPC 握手**。它借 WorkBuddy 主进程的登录身份查计费接口（HMAC 双向证明 + 命名管道），实现复杂且只在客户端运行时可用。实测本项目保险库里的 token 带上面几个头就能直接调通同样接口，数字与 cc-switch 完全一致（1938.28 / 体验版 / 788 分 12-17 到期）。
 - **到期按「日期」合并**：同一天到期的多笔积分要相加（688.28 + 100 = 788），取当天最早一笔的时间；按精确时间戳分组会拆成两行，数量对不上 cc-switch。超远（10 年以上）视为永不过期；`CapacityType==4` 且按天切片的资源跳过。
 - 缓存 5 分钟（`QuotaCache`，进程内），页面「刷新额度」传 `force=1` 跳过；单账号失败降级为 `ok=false` + 明确 `reason`，不影响其它账号。API `/api/quota`，新增能力标记 `quota.overview` 并加入前端 `REQUIRED_CAPS`，避免旧后端 404 时页面无提示。
+- **国际版额度查询的最终决定：按 `UNSUPPORTED_VERSIONS` 跳过，显示中性「未提供活动签到」**。中间曾改成真实查询（Trae Global 走 `api.trae.com`，WorkBuddy Global 用凭据自带 endpoint），实测 WB 无国际网关、Trae Global 返回 404，用户明确要求「别这样报错了」。现在 `_fetch_one()` 直接标记 `no_activity=True` + reason「未提供活动签到」并 return，不解析凭据、不发网络；前端靠 `no_activity` 把套餐列显示灰色提示、其余列显示「—」。各平台函数里的国际网关逻辑保留，日后接口支持时去掉跳过即可。其它版本真实失败仍保留明确 reason。回归测试：`test_global_versions_skip_quota_with_neutral_message`、`test_http_404_on_supported_version_keeps_explicit_reason`、`test_credentials_default_endpoint_only_for_cn`。
 - 额度展示放在「今日概览 → 今日各账号状态」卡片内部（和签到记录同一张表区域），**不要**单独占「账号配置」页的卡片：账号配置页已经有账号表格 + 自动签到 + 登录态探测，再来一张额度卡太挤。前端 `loadOverview()` 负责拉额度并绑定刷新按钮，`LOADERS.accounts` 不再调用 `loadQuota()`。
 - token 是否过期以实际返回为准：同一账号不同时间可能 401，也可能是接口结构没对上而被误判为失败，先看原始响应再下结论。测试用 mock，不依赖真实网络与真实 token。
 
@@ -146,6 +147,9 @@ Trae Global 没有每日签到入口；WorkBuddy Global 定价页写的「每日
 - **Windows 时区**：`zoneinfo` 可能缺 tzdata，配置校验放行 `utils.get_tz()` 内置的别名（`Asia/Shanghai` / `UTC+8` / `UTC` 等）。
 - **测试隔离**：任何会写配置/保险库的测试都要设置 `CHECKIN_HOME` 指向临时目录（见 `tests/test_manage.py`），否则会污染真实 `data/vault.json`。
 - **账号 ID**：由 `manage.next_account_id()` 自动生成（`平台缩写-版本-序号`，如 `qoder-gl-01`），只作为内部去重键，不要让用户手填。
+- **国际版复用国内凭据时留空、不显示同名账号**：WorkBuddy/Trae 的 `/api/autofill` 只探测国内客户端，给 global 账号点「自动获取」会把国内身份写进去。`/api/autofill` 对 global 直接返回 400；`web._identity_context()` 按 uid（或账号名）与 cn 比对，命中就清空 identity/phone/uid。**本机没有国际版登录态时宁可留空，也不要拿国内账号名冒充国际版账号**，更不要显示「与国内版同账号」这类用户看不懂的标记（用户明确否决过）。原因只在账号配置页的提示里说明。Qoder 国际版有独立客户端，不套这条规则。
+- **Qoder 旧凭据的真实名称**：老版本保存凭据时只写了 uid，面板会把 UUID 当成账号名。`_vault_identity_map()` 对没有 `account_name` 的 Qoder 账号，用本机对应版本客户端的 `auto_detect(version)` 补真实名称（进程内缓存 5 分钟，只取 name/phone，不碰 token）；补不到才退回 uid。实测 CN=`aliyun2275463430`、Global=`xin tu`。
+- **表格宽度与行高**：账号信息（备注名 + 真实账号）单独一列、`.acctinfo` 单行省略号；「账号」列只放 ID + 平台版本，避免撑高行。今日状态表不要放「次数」（用户看不懂）、「补跑」（恒为否，且不做跨天补签）、「平台/版本」（账号 ID 已含）这几列，否则窄屏会横向溢出。
 
 ## 改动后的验证清单
 

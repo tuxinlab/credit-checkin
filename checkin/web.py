@@ -17,7 +17,7 @@ import urllib.parse
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .config import DEFAULTS, load_config
 from .credentials import default_vault, probe_local, resolve as resolve_credential, vault_path
@@ -98,6 +98,33 @@ def _mask_phone(phone: str) -> str:
     return s[:2] + "***"
 
 
+_QODER_LIVE_CACHE: Dict[str, tuple] = {}
+
+
+def _qoder_live_identity(version: str) -> Dict[str, str]:
+    """只读探测本机 Qoder 客户端，补齐真实账号名（不取/不存 token）。
+
+    旧版保存凭据时只写了 uid，导致面板把 UUID 当成账号名显示。这里在进程内
+    缓存 5 分钟，避免每次刷新页面都做一次 DPAPI 解密。
+    """
+    import time
+    now = time.time()
+    cached = _QODER_LIVE_CACHE.get(version)
+    if cached and now - cached[0] < 300:
+        return cached[1]
+    out = {"identity": "", "phone": ""}
+    try:
+        from .autofill_qoder_local import auto_detect
+        result = auto_detect(version)
+        if result.get("ok"):
+            out["identity"] = str(result.get("account_name") or result.get("email") or "")
+            out["phone"] = _mask_phone(str(result.get("phone") or ""))
+    except Exception:
+        pass
+    _QODER_LIVE_CACHE[version] = (now, out)
+    return out
+
+
 def _vault_identity_map() -> Dict[str, Dict[str, str]]:
     """从保险库读出每个账号的真实身份（客户端登录态解析出的账号名/手机号）。"""
     from .credentials import default_vault
@@ -110,11 +137,59 @@ def _vault_identity_map() -> Dict[str, Dict[str, str]]:
                 continue
             item = vault.get(*parts) or {}
             f = item.get("fields") or {}
-            out[key] = {"identity": f.get("account_name") or "",
-                        "phone": _mask_phone(f.get("phone", ""))}
+            platform, version = parts[0], parts[1]
+            identity = f.get("account_name") or f.get("nickname") or ""
+            phone = _mask_phone(f.get("phone", ""))
+            # 旧凭据只存了 uid：从对应版本的本机客户端补出真实账号名
+            if platform == "qoder" and not identity:
+                live = _qoder_live_identity(version)
+                identity = live["identity"]
+                phone = phone or live["phone"]
+            out[key] = {"identity": identity or str(f.get("uid") or ""),
+                        "phone": phone,
+                        "uid": str(f.get("uid") or "")}
     except Exception:
         pass
     return out
+
+
+def _identity_context(accounts: List[Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
+    """身份展示上下文：剔除国际版账号里误存的国内客户端身份。
+
+    WorkBuddy / Trae 的自动获取只探测国内客户端（workbuddy-desktop.info /
+    Trae CN storage.json）。如果用户给国际版账号点了「自动获取」，存进来的
+    其实是国内账号的身份。按 uid（或账号名）与国内版比对，命中就清空身份——
+    本机没有国际版登录态，拿不到真实账号时宁可不显示，也不能拿国内账号冒充。
+    """
+    def field(obj, name, default=""):
+        return obj.get(name, default) if isinstance(obj, dict) else getattr(obj, name, default)
+
+    identities = _vault_identity_map()
+    cn_marks: Dict[str, set] = {}
+    for acc in accounts:
+        if str(field(acc, "version") or "").lower() != "cn":
+            continue
+        item = identities.get(f"{field(acc, 'platform')}:cn:{field(acc, 'id')}") or {}
+        mark = item.get("uid") or item.get("identity")
+        if mark:
+            cn_marks.setdefault(str(field(acc, "platform")), set()).add(mark)
+    for acc in accounts:
+        if str(field(acc, "version") or "").lower() != "global":
+            continue
+        platform = str(field(acc, "platform"))
+        if platform not in ("workbuddy", "trae"):
+            continue  # Qoder 国际版有独立客户端与设备授权，身份本来就是隔离的
+        key = f"{platform}:global:{field(acc, 'id')}"
+        item = identities.get(key) or {}
+        mark = item.get("uid") or item.get("identity")
+        if mark and mark in cn_marks.get(platform, set()):
+            # 本机只有国内客户端登录态，国际版拿不到真实账号：宁可留空，
+            # 也不要把国内账号名冒充成国际版账号显示。
+            item["identity"] = ""
+            item["phone"] = ""
+            item["uid"] = ""
+            item["identity_note"] = "国际版无本机登录态，未获取到真实账号；可在账号配置里手动填写"
+    return identities
 
 
 def _trend(state: WebState, days: int = 14) -> Dict[str, Any]:
@@ -147,8 +222,12 @@ def _run_overview(state: WebState) -> Dict[str, Any]:
         if r.status in (RunStatus.SUCCESS.value, RunStatus.ALREADY.value)
     )
 
-    identities = _vault_identity_map()
+    identities = _identity_context(cfg.get("accounts", []))
     accounts = []
+    names_by_key = {
+        f"{acc.platform}:{acc.version}:{acc.id}": acc.name or ""
+        for acc in cfg.get("accounts", [])
+    }
     for acc in cfg.get("accounts", []):
         cred = resolve_credential(acc, allow_local_decrypt=False)
         ident = identities.get(f"{acc.platform}:{acc.version}:{acc.id}", {})
@@ -162,6 +241,7 @@ def _run_overview(state: WebState) -> Dict[str, Any]:
             "credential_masked": cred.masked(),
             "identity": ident.get("identity", ""),
             "identity_phone": ident.get("phone", ""),
+            "identity_note": ident.get("identity_note", ""),
             "device_identity": bool(cred.fields.get("machine_token")),
             "has_contract": state.registry.has(acc.platform, acc.version),
         })
@@ -169,8 +249,10 @@ def _run_overview(state: WebState) -> Dict[str, Any]:
     run_items = []
     for r in runs:
         item = _serialize_run(r)
-        ident = identities.get(f"{r.platform}:{r.version}:{r.account_id}", {})
+        key = f"{r.platform}:{r.version}:{r.account_id}"
+        ident = identities.get(key, {})
         item["account_identity"] = ident.get("identity", "")
+        item["account_name"] = names_by_key.get(key, "")
         run_items.append(item)
 
     return {
@@ -399,19 +481,22 @@ class WebHandler(BaseHTTPRequestHandler):
                     vault = default_vault()
                 except Exception:
                     vault = None
+                identities = _identity_context(accounts)
                 for a in accounts:
+                    key = f"{a['platform']}:{a['version']}:{a['id']}"
                     item = None
                     if vault is not None:
                         try:
                             item = vault.get(a["platform"], a["version"], a["id"])
                         except Exception:
                             item = None
-                    f = (item or {}).get("fields") or {}
+                    ident = identities.get(key) or {}
                     a["has_credential"] = bool((item or {}).get("token"))
                     # 真实账号身份（来自客户端登录态，非用户手填的标签）
-                    a["identity"] = f.get("account_name") or f.get("nickname") or f.get("uid") or ""
-                    a["identity_phone"] = _mask_phone(f.get("phone", ""))
-                    a["identity_uid"] = f.get("uid", "")
+                    a["identity"] = ident.get("identity", "")
+                    a["identity_phone"] = ident.get("phone", "")
+                    a["identity_note"] = ident.get("identity_note", "")
+                    a["identity_uid"] = ident.get("uid", "")
                     # 该版本本身没有签到活动（如 Trae 国际版）：禁止启用，页面给出原因
                     contract = self.state.registry.contracts.get(
                         (a["platform"], a["version"])) or {}
@@ -425,10 +510,28 @@ class WebHandler(BaseHTTPRequestHandler):
                 from .quota import query_quotas
                 qs = urllib.parse.parse_qs(parsed.query)
                 force = str(qs.get("force", ["0"])[0]).lower() in ("1", "true", "yes")
+                accounts = self.state.cfg.get("accounts", [])
                 items = query_quotas(
-                    self.state.cfg.get("accounts", []), force=force,
+                    accounts, force=force,
                     allow_local_decrypt=self.state.allow_local_decrypt)
-                self._send_json({"items": [q.to_dict() for q in items]})
+                identities = _identity_context(accounts)
+                def af(a, name, default=""):
+                    return a.get(name, default) if isinstance(a, dict) else getattr(a, name, default)
+
+                by_key = {f"{af(a, 'platform')}:{af(a, 'version')}:{af(a, 'id')}": a
+                          for a in accounts}
+                out = []
+                for q in items:
+                    item = q.to_dict()
+                    acc = by_key.get(q.key) or {}
+                    ident = identities.get(q.key) or {}
+                    # 额度表也要能看出"这是谁的号"：备注名 + 真实账号（已从客户端解析）
+                    item["account_name"] = str(af(acc, "name") or "")
+                    item["identity"] = ident.get("identity", "")
+                    item["identity_phone"] = ident.get("phone", "")
+                    item["identity_note"] = ident.get("identity_note", "")
+                    out.append(item)
+                self._send_json({"items": out})
                 return
             if path == "/api/guide":
                 qs = urllib.parse.parse_qs(parsed.query)
@@ -440,6 +543,11 @@ class WebHandler(BaseHTTPRequestHandler):
                 platform = qs.get("platform", [""])[0]
                 version = qs.get("version", ["cn"])[0]
                 account_id = qs.get("id", [""])[0]
+                if version != "cn" and platform in ("workbuddy", "trae"):
+                    self._send_json({"ok": False, "error":
+                                     "本机只有国内版客户端登录态，自动获取会误绑国内账号；"
+                                     "该版本无签到活动，无需获取凭据"}, 400)
+                    return
                 if platform == "workbuddy":
                     from .autofill import auto_detect
                     result = auto_detect()

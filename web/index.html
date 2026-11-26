@@ -72,6 +72,7 @@ pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12
 .qnum{font-variant-numeric:tabular-nums;font-weight:600}
 .qsoon{color:var(--warn);font-weight:600}
 .qerr{color:var(--err)}
+.acctinfo{display:inline-block;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
 .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
 @media(max-width:640px){.wrap{padding:16px 12px 40px}.msg{max-width:160px}.form-row{grid-template-columns:1fr}}
 </style>
@@ -208,15 +209,26 @@ function tag(s){return `<span class="tag ${esc(s)}" title="${esc(STATUS_HINT[s]|
 function table(cols,rows){if(!rows.length)return '<div class="empty">暂无数据</div>';return `<table><thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`;}
 function short(t){if(!t)return '-';const s=String(t);const i=s.indexOf('T');return i>=0?s.slice(i+1,16):s.slice(0,16);}
 
-function renderRuns(runs,{withAttempts=false}={}){
-  return table(['账号','平台/版本','日期','状态','次数','积分','补跑','完成时间','说明'],runs.map(r=>`<tr>
-    <td>${esc(r.account_id)}${r.account_identity?`<div class="meta">${esc(r.account_identity)}</div>`:''}</td>
-    <td>${esc(r.platform)}.${esc(r.version)}</td>
+function accountInfoCell(d){
+  // 只显示已确认的真实账号：拿不到就留空，不拿国内账号冒充，也不塞长提示撑宽列。
+  const parts=[];
+  if(d.account_name)parts.push(`备注 ${esc(d.account_name)}`);
+  if(d.identity||d.account_identity){
+    const who=d.identity||d.account_identity;
+    parts.push(`真实账号 ${esc(who)}${d.identity_phone?` (${esc(d.identity_phone)})`:''}`);
+  }
+  const text=parts.join(' · ')||'-';
+  return `<span class="acctinfo" title="${esc(text)}">${text}</span>`;
+}
+
+function renderRuns(runs){
+  // 列数尽量少，避免窄屏横向溢出：平台/版本已包含在账号 ID 里，补跑恒为「否」。
+  return table(['账号','账号信息','日期','状态','积分','完成时间','说明'],runs.map(r=>`<tr>
+    <td>${esc(r.account_id)}</td>
+    <td>${accountInfoCell(r)}</td>
     <td>${esc(r.target_date)}</td>
     <td>${tag(r.status)}</td>
-    <td>${r.attempts??0}</td>
     <td>${r.credits??'-'}</td>
-    <td>${r.is_catchup?'是':'否'}</td>
     <td class="muted">${short(r.finished_at)}</td>
     <td class="msg" title="${esc(r.message)}">${esc(r.message||'-')}</td>
   </tr>`));
@@ -403,7 +415,11 @@ async function showCredential(acc){
   };
 }
 
+function quotaAccountCell(q){
+  return `${esc(q.account_id)}${q.platform?`<div class="meta">${esc(q.platform)}.${esc(q.version)}</div>`:''}`;
+}
 function quotaCell(q){
+  if(q&&q.no_activity)return '<span class="meta">—</span>';
   if(!q||!q.ok)return `<span class="qerr" title="${esc((q&&q.reason)||'无法查询')}">${q&&q.reason?esc(q.reason):'暂无数据'}</span>`;
   const remain=q.remaining??0, total=q.total;
   const pct=(total&&total>0)?Math.min(100,Math.round(remain/total*100)):null;
@@ -422,13 +438,14 @@ async function loadQuota(force=false){
   try{
     const d=await api('/api/quota'+(force?'?force=1':''));
     const rows=(d.items||[]).map(q=>`<tr>
-      <td>${esc(q.account_id)}${q.platform?`<div class="meta">${esc(q.platform)}.${esc(q.version)}</div>`:''}</td>
-      <td>${q.ok?esc(q.plan||'-'):`<span class="meta qerr" title="${esc(q.reason||'')}">${esc(q.reason||'-')}</span>`}</td>
+      <td>${quotaAccountCell(q)}</td>
+      <td>${accountInfoCell(q)}</td>
+      <td>${q.no_activity?`<span class="meta">${esc(q.reason||'未提供活动签到')}</span>`:(q.ok?esc(q.plan||'-'):`<span class="meta qerr" title="${esc(q.reason||'')}">${esc(q.reason||'-')}</span>`)}</td>
       <td>${quotaCell(q)}</td>
       <td>${expiryCell(q)}</td>
-      <td class="meta">${q.queried_at?esc(q.queried_at.slice(5,16)):'-'}</td>
+      <td class="meta">${q.no_activity?'-':(q.queried_at?esc(q.queried_at.slice(5,16)):'-')}</td>
     </tr>`);
-    box.innerHTML=table(['账号','套餐','剩余积分','最近到期','查询时间'],rows);
+    box.innerHTML=table(['账号','账号信息','套餐','剩余积分','最近到期','查询时间'],rows);
   }catch(e){box.innerHTML=`<div class="banner err">额度查询失败：${esc(e.message)}</div>`;}
 }
 
@@ -436,7 +453,7 @@ async function loadAccountConfig(){
   const d=await api('/api/accounts');
   const rows=d.items.map(a=>`<tr>
     <td>${esc(a.id)}</td><td>${esc(a.platform)}.${esc(a.version)}</td><td>${esc(a.name)}</td>
-    <td>${a.identity?`<b>${esc(a.identity)}</b>${a.identity_phone?`<div class="meta">${esc(a.identity_phone)}</div>`:''}`:'<span class="meta">未获取，点「配置凭据 → 自动获取」</span>'}</td>
+    <td>${a.identity?`<b>${esc(a.identity)}</b>${a.identity_phone?`<div class="meta">${esc(a.identity_phone)}</div>`:''}`:`<span class="meta" title="${esc(a.identity_note||'')}">${esc(a.identity_note||'未获取，点「配置凭据 → 自动获取」')}</span>`}</td>
     <td>${a.unsupported?'<span class="tag skipped" title="'+esc(a.note||'该版本无签到活动')+'">无签到活动</span>':(a.enabled?'<span class="tag success">启用</span>':'<span class="tag skipped">停用</span>')}${!a.unsupported&&a.version_enabled===false?'<div class="meta" style="margin-top:4px">版本开关关闭</div>':''}</td>
     <td>${a.has_credential?'<span class="tag success">已配置</span>':'<span class="tag failed">未配置</span>'}${a.platform==='qoder'&&a.has_credential&&a.device_identity===false?'<div class="meta" style="color:var(--warn);margin-top:4px">缺设备身份，平台会只返回订阅推广</div>':''}</td>
     <td style="white-space:nowrap">

@@ -3,17 +3,22 @@
 三个平台的计费接口都不在签到契约里，单独放在本模块：
 - WorkBuddy CN/Global: POST {endpoint}/billing/meter/get-user-resource-summary
   再按汇总返回的 PackageCode 查 free/paid packages 拿到期时间。
-- Trae CN: POST https://api.trae.cn/trae/api/v2/pay/web_user_ent_usage
-  （社区验证的额度快照接口；本机登录态 token 可能已过期，如实返回原因。）
+  CN 默认 copilot.tencent.com；Global 必须用凭据里配置的 endpoint，不猜国内网关。
+- Trae CN/Global: POST {gateway}/trae/api/v2/pay/web_user_ent_usage
+  （CN 网关 api.trae.cn；Global 网关 api.trae.com，均可用凭据 endpoint 覆盖。）
 - Qoder CN/Global: POST https://openapi.qoder.com.cn/api/v2/quota/usage
   （Global 为 openapi.qoder.sh；响应 userQuota/addOnQuota。）
 
 设计原则：
 1. 只读查询，绝不调用签到/领取/登录/续期接口。
-2. 凭据复用 credentials.resolve()，token 只在内存中使用，不打印、不落盘。
-3. 每个账号独立查询，单个失败不影响其它账号；失败返回明确 reason。
-4. 缓存 5 分钟（进程内），页面刷新命中缓存；force=True 跳过缓存。
-5. 返回数据全部是可展示的聚合值（剩余/总额/套餐/到期），不含敏感字段。
+2. 国际版（WorkBuddy/Trae Global）经实测额度接口也不可用：WorkBuddy Global
+   没有可配置的国际网关，Trae Global 的 `api.trae.com` 返回 404。因此对
+   `UNSUPPORTED_VERSIONS` 直接跳过查询，返回中性提示「未提供活动签到」，
+   不发网络请求、不显示红色报错；其它版本的真实失败仍保留明确原因。
+3. 凭据复用 credentials.resolve()，token 只在内存中使用，不打印、不落盘。
+4. 每个账号独立查询，单个失败不影响其它账号；失败返回明确 reason。
+5. 缓存 5 分钟（进程内），页面刷新命中缓存；force=True 跳过缓存。
+6. 返回数据全部是可展示的聚合值（剩余/总额/套餐/到期），不含敏感字段。
 """
 from __future__ import annotations
 
@@ -48,6 +53,7 @@ class QuotaInfo:
     version: str = ""
     account_id: str = ""
     ok: bool = False
+    no_activity: bool = False              # 该版本无签到活动且额度接口实测不可用，仅展示中性提示
     remaining: Optional[float] = None      # 剩余积分
     total: Optional[float] = None          # 总额度（可为 0）
     used: Optional[float] = None
@@ -65,7 +71,7 @@ class QuotaInfo:
 
         return {
             "key": self.key, "platform": self.platform, "version": self.version,
-            "account_id": self.account_id, "ok": self.ok,
+            "account_id": self.account_id, "ok": self.ok, "no_activity": self.no_activity,
             "remaining": _num(self.remaining), "total": _num(self.total),
             "used": _num(self.used), "plan": self.plan,
             "expires_at": self.expires_at, "expires_credits": _num(self.expires_credits),
@@ -228,7 +234,12 @@ def _earliest_expiry(accounts: Any) -> tuple[str, Optional[float]]:
 
 
 def _workbuddy(account: Account, cred, info: QuotaInfo) -> QuotaInfo:
-    base = str(cred.fields.get("endpoint") or "https://copilot.tencent.com").rstrip("/")
+    base = str(cred.fields.get("endpoint") or "").strip().rstrip("/")
+    if not base and account.version == "cn":
+        base = "https://copilot.tencent.com"
+    if not base:
+        # 国际版不能悄悄用国内网关查，否则会把国内额度显示成国际版的。
+        raise RuntimeError("国际版未配置额度接口地址，请在凭据里填写 endpoint；若该版本无额度接口请忽略")
     headers = {
         "Authorization": f"Bearer {cred.token}",
         "X-User-Id": str(cred.fields.get("uid", "")),
@@ -323,18 +334,26 @@ def _workbuddy(account: Account, cred, info: QuotaInfo) -> QuotaInfo:
 
 
 def _trae(account: Account, cred, info: QuotaInfo) -> QuotaInfo:
+    # 国际版网关与国内版不同（契约里 Trae Global 用 api.trae.com）；
+    # 用户在凭据里填了 endpoint 时以填写值为准。
+    is_global = account.version == "global"
+    gateway = str(cred.fields.get("endpoint") or "").strip().rstrip("/")
+    if not gateway:
+        gateway = "https://api.trae.com" if is_global else "https://api.trae.cn"
+    origin = "https://www.trae.ai" if is_global else "https://www.trae.cn"
     headers = {
         "Authorization": f"Cloud-IDE-JWT {cred.token}",
         "x-device-id": str(cred.fields.get("device_id", "")),
         "Content-Type": "application/json",
-        "X-User-Region": "CN",
         "x-device-type": "Windows",
         "x-app-version": str(cred.fields.get("app_version") or "1.107.1"),
         "User-Agent": "Trae/1.107.1",
-        "Origin": "https://www.trae.cn",
-        "Referer": "https://www.trae.cn/",
+        "Origin": origin,
+        "Referer": origin + "/",
     }
-    d = _post_json("https://api.trae.cn/trae/api/v2/pay/web_user_ent_usage", {}, headers)
+    if not is_global:
+        headers["X-User-Region"] = "CN"
+    d = _post_json(gateway + "/trae/api/v2/pay/web_user_ent_usage", {}, headers)
     code = d.get("code")
     if code not in (0, None):
         raise RuntimeError("凭据已失效或额度接口不可用")
@@ -430,19 +449,19 @@ def _fetch_one(account: Account, allow_local_decrypt: bool) -> QuotaInfo:
         platform=account.platform, version=account.version, account_id=account.id,
         queried_at=time.time(),
     )
+    # 国际版没签到活动，额度接口实测也不可用（WB 无国际网关配置、Trae Global 404）。
+    # 不再发请求、不再报红色错误，只给中性提示；前端靠 no_activity 区分于真实失败。
+    if (account.platform, account.version) in UNSUPPORTED_VERSIONS:
+        info.no_activity = True
+        info.reason = "未提供活动签到"
+        return info
     try:
-        # 没有签到活动的版本（如 WorkBuddy/Trae 国际版）不查额度：
-        # 它们的凭据往往就是国内账号那份，拿国内接口查会把国内额度错显示成国际版的。
-        if (account.platform, account.version) in UNSUPPORTED_VERSIONS:
-            raise RuntimeError("该版本无签到活动，不查询额度")
         cred = resolve_credential(account, allow_local_decrypt=allow_local_decrypt)
         if not cred.token:
             raise RuntimeError("未配置凭据，请先到「账号配置」获取")
         if account.platform == "workbuddy":
             _workbuddy(account, cred, info)
         elif account.platform == "trae":
-            if account.version != "cn":
-                raise RuntimeError("该版本暂无额度查询接口")
             _trae(account, cred, info)
         elif account.platform == "qoder":
             _qoder(account, cred, info)
@@ -452,6 +471,8 @@ def _fetch_one(account: Account, allow_local_decrypt: bool) -> QuotaInfo:
         info.ok = False
         info.remaining = info.total = info.used = None
         detail = str(exc).strip()
+        if detail == "HTTP 404":
+            detail = "该版本额度接口暂不可用（HTTP 404）"
         if len(detail) > 120:
             detail = detail[:120] + "…"
         info.reason = detail or type(exc).__name__

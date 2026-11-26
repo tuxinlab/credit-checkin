@@ -251,8 +251,11 @@ def _inject_common_env(cred: Credential, account: Account) -> None:
                 cred.headers.update({str(k): str(v) for k, v in parsed.items()})
         except ValueError:
             pass
-    # 平台默认值：避免从保险库/本地登录态读到的凭据缺少 endpoint 导致相对 URL
-    if account.platform == "workbuddy" and not cred.fields.get("endpoint"):
+    # 平台默认值：避免从保险库/本地登录态读到的凭据缺少 endpoint 导致相对 URL。
+    # 只给国内版补默认网关：国际版账号用国内网关查会把国内额度错显示成国际版的，
+    # 额度查询模块会对未配置 endpoint 的国际版给出明确提示（见 quota.py）。
+    if (account.platform == "workbuddy" and account.version == "cn"
+            and not cred.fields.get("endpoint")):
         cred.fields["endpoint"] = "https://copilot.tencent.com"
 
 

@@ -6,6 +6,7 @@ import time
 import unittest
 from unittest import mock
 
+from checkin import credentials as credential_module
 from checkin import quota
 from checkin.credentials import Credential
 from checkin.models import Account
@@ -216,15 +217,40 @@ class CacheAndFetchTests(unittest.TestCase):
         self.assertIn("凭据文件损坏", info.reason)
         self.assertIsNone(info.remaining)
 
-    def test_unsupported_version_skips_domestic_quota(self):
-        """国际版没有签到活动，且凭据常是国内账号那份，不能拿国内额度冒充。"""
-        info = quota._fetch_one(_account("workbuddy", "global", "wb-gl-01"), allow_local_decrypt=False)
+    def test_global_versions_skip_quota_with_neutral_message(self):
+        """国际版额度接口实测不可用：不发请求、不报错，只给中性提示。"""
+        for platform in ("workbuddy", "trae"):
+            with mock.patch.object(quota, "resolve_credential") as resolve, \
+                 mock.patch.object(quota, "_post_json") as post:
+                info = quota._fetch_one(_account(platform, "global"), False)
+            self.assertFalse(info.ok)
+            self.assertTrue(info.no_activity)
+            self.assertEqual(info.reason, "未提供活动签到")
+            self.assertIsNone(info.remaining)
+            self.assertFalse(post.called)
+            self.assertFalse(resolve.called)
+            d = info.to_dict()
+            self.assertTrue(d["no_activity"])
+            self.assertNotIn("HTTP 404", d["reason"])
+
+    def test_http_404_on_supported_version_keeps_explicit_reason(self):
+        """其它版本的真实接口失败仍保留明确原因，不被中性提示掩盖。"""
+        cred = Credential(token="x")
+        with mock.patch.object(quota, "resolve_credential", return_value=cred), \
+             mock.patch.object(quota, "_post_json", side_effect=RuntimeError("HTTP 404")):
+            info = quota._fetch_one(_account("trae", "cn"), False)
         self.assertFalse(info.ok)
-        self.assertIsNone(info.remaining)
-        self.assertIn("无签到活动", info.reason)
-        info2 = quota._fetch_one(_account("trae", "global", "trae-gl-01"), allow_local_decrypt=False)
-        self.assertFalse(info2.ok)
-        self.assertIn("无签到活动", info2.reason)
+        self.assertFalse(info.no_activity)
+        self.assertIn("HTTP 404", info.reason)
+
+    def test_credentials_default_endpoint_only_for_cn(self):
+        cred = Credential(token="x")
+        with mock.patch.dict("os.environ", {"WORKBUDDY_ENDPOINT": ""}):
+            credential_module._inject_common_env(cred, _account("workbuddy", "cn"))
+            self.assertEqual(cred.fields.get("endpoint"), "https://copilot.tencent.com")
+            global_cred = Credential(token="x")
+            credential_module._inject_common_env(global_cred, _account("workbuddy", "global"))
+            self.assertNotIn("endpoint", global_cred.fields)
 
     def test_missing_token_reason(self):
         with mock.patch.object(quota, "resolve_credential", return_value=Credential(token="")):
