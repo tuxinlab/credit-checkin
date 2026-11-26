@@ -118,6 +118,18 @@ Trae Global 没有每日签到入口；WorkBuddy Global 定价页写的「每日
 - 设置里要有 `StartWhenAvailable` / `AllowStartIfOnBatteries` / `DontStopIfGoingOnBatteries` / `RestartCount=2`，笔记本缺了这些会频繁漏签。
 - **验证电池选项不要用 `Get-ScheduledTask`**：这两个属性是 nullable，即使设置成功也显示为空，容易误判成"没写进去"。用 `Export-ScheduledTask -TaskName CreditCheckinDaily` 导出 XML，看 `<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>` 和 `<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>` 才是实际值。任务重新注册后 `LastTaskResult` 会短暂显示 `267011`（尚未运行），不是失败。
 
+### 账号额度/到期查询（checkin/quota.py）
+
+- 三个平台的额度接口都在签到契约之外，单独放在 `quota.py`，**只读 POST**，绝不碰签到/登录/续期接口：
+  - WorkBuddy：`POST {endpoint}/billing/meter/get-user-resource-summary`（`endpoint` 默认 `copilot.tencent.com`），再从返回的 `Packages[].PackageCode` 决定查 `get-user-resource-free-packages` 还是 `paid-packages` 拿到期。**必须带契约同款头**：`Authorization: Bearer {token}` + `X-User-Id` + `X-Domain`；企业号再带 `X-Enterprise-Id`/`X-Tenant-Id` 并优先走 `get-enterprise-user-usage`。**`TotalCredits` 名字骗人，它其实是剩余积分**（等于 `CreditGroups[].CycleRemainCapacity` 之和）；总额必须汇总 `Packages[].CycleTotalCapacity`（或 `CreditGroups[].CycleTotalCapacity`），否则会显示成 `2038.28 / 2038.28` 这种错误比例。
+  - Trae：`POST api.trae.cn/trae/api/v2/pay/web_user_ent_usage`，头 `Cloud-IDE-JWT {token}` + `x-device-id`。**实测真实响应没有 `code`/`remainingCredits` 这些字段**：剩余是 `total_balance`（或 `balance_summary[].total_balance`），总额是 `usage_summary.total_amount`，已用是 `usage_summary.consumed_amount`，到期在 `user_entitlement_pack_list[].entitlement_base_info.end_time`（**秒级**时间戳，不是毫秒）。只认旧字段名会误报「额度接口未返回可识别的积分字段」。
+  - Qoder：`POST openapi.qoder.com.cn/api/v2/quota/usage`（国际版 `.sh`），剩余 = `userQuota.remaining + addOnQuota.remaining`，总额 = 两者 `total` 之和；`expiresAt=253402214400000` 是「永不过期」占位，不要显示。
+- **不要再复刻 cc-switch 的 WBIPC 握手**。它借 WorkBuddy 主进程的登录身份查计费接口（HMAC 双向证明 + 命名管道），实现复杂且只在客户端运行时可用。实测本项目保险库里的 token 带上面几个头就能直接调通同样接口，数字与 cc-switch 完全一致（1938.28 / 体验版 / 788 分 12-17 到期）。
+- **到期按「日期」合并**：同一天到期的多笔积分要相加（688.28 + 100 = 788），取当天最早一笔的时间；按精确时间戳分组会拆成两行，数量对不上 cc-switch。超远（10 年以上）视为永不过期；`CapacityType==4` 且按天切片的资源跳过。
+- 缓存 5 分钟（`QuotaCache`，进程内），页面「刷新额度」传 `force=1` 跳过；单账号失败降级为 `ok=false` + 明确 `reason`，不影响其它账号。API `/api/quota`，新增能力标记 `quota.overview` 并加入前端 `REQUIRED_CAPS`，避免旧后端 404 时页面无提示。
+- 额度展示放在「今日概览 → 今日各账号状态」卡片内部（和签到记录同一张表区域），**不要**单独占「账号配置」页的卡片：账号配置页已经有账号表格 + 自动签到 + 登录态探测，再来一张额度卡太挤。前端 `loadOverview()` 负责拉额度并绑定刷新按钮，`LOADERS.accounts` 不再调用 `loadQuota()`。
+- token 是否过期以实际返回为准：同一账号不同时间可能 401，也可能是接口结构没对上而被误判为失败，先看原始响应再下结论。测试用 mock，不依赖真实网络与真实 token。
+
 ### 其它容易重犯的
 
 - **弹窗遮罩**：`hidden` 属性与 CSS `display:flex` 冲突会导致弹窗关不掉；用 `style.display` 显式控制。

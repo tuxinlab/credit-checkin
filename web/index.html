@@ -28,10 +28,6 @@ h1{font-size:20px;margin:0;font-weight:600}
 .tab{padding:9px 15px;cursor:pointer;border:0;background:none;color:var(--muted);font-size:14px;border-bottom:2px solid transparent}
 .tab.active{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-.stat{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
-.stat .n{font-size:26px;font-weight:600;line-height:1.2}
-.stat .l{color:var(--muted);font-size:12px;margin-top:4px}
 .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
 button,select,input{font:inherit}
 .btn{padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--text);cursor:pointer}
@@ -71,6 +67,11 @@ pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12
 .guide li{margin:4px 0}
 .guide .guide-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
 .btn.sm{padding:6px 11px;font-size:13px}
+.qbar{height:6px;background:var(--line);border-radius:6px;overflow:hidden;min-width:90px;margin-top:5px}
+.qbar>i{display:block;height:100%;background:var(--accent);border-radius:6px}
+.qnum{font-variant-numeric:tabular-nums;font-weight:600}
+.qsoon{color:var(--warn);font-weight:600}
+.qerr{color:var(--err)}
 .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
 @media(max-width:640px){.wrap{padding:16px 12px 40px}.msg{max-width:160px}.form-row{grid-template-columns:1fr}}
 </style>
@@ -103,7 +104,6 @@ pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12
 
 <section id="tab-overview">
   <div id="setup-guide"></div>
-  <div class="stats" id="stats"></div>
   <div class="card">
     <div class="toolbar">
       <button class="btn primary" id="btn-run">立即签到</button>
@@ -117,6 +117,14 @@ pre{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:12
   <div class="card"><h3 style="margin:0 0 12px;font-size:14px">近 14 天积分</h3><div id="trend-box"></div></div>
   <div class="card"><h3 style="margin:0 0 12px;font-size:14px">今日各账号状态</h3><div id="today-table"></div>
     <p class="meta">「本次领取」＝这次运行真的发起领取并拿到积分；「今日已领」＝运行前服务端就显示已领过（客户端手动签的，或更早一次运行领的）。两者都计入今日积分，都不会重复领取。</p>
+    <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <h3 style="margin:0;font-size:14px">账号额度与到期</h3>
+        <button class="btn sm" id="btn-refresh-quota">刷新额度</button>
+      </div>
+      <div id="quota-box"></div>
+      <p class="meta">积分余额与到期时间来自各平台账户接口，只读查询、不消耗积分；结果缓存 5 分钟，点「刷新额度」可立即重新查询。凭据失效或接口暂不可用时会在表格里说明原因。</p>
+    </div>
   </div>
 </section>
 
@@ -240,13 +248,6 @@ async function loadOverview(){
   const d=await api('/api/overview');
   renderSetupGuide(d.accounts);
   $('#meta').textContent=`今日 ${d.today} · 时区 ${d.timezone} · 窗口 ${d.window.start}~${d.window.end}`;
-  const s=d.stats;
-  $('#stats').innerHTML=`
-    <div class="stat"><div class="n">${s.total}</div><div class="l">今日任务</div></div>
-    <div class="stat"><div class="n" style="color:var(--ok)">${s.by_status.success||0}</div><div class="l">本次领取</div></div>
-    <div class="stat"><div class="n" style="color:var(--accent)">${s.by_status.already||0}</div><div class="l">运行前已领</div></div>
-    <div class="stat"><div class="n" style="color:var(--err)">${(s.by_status.failed||0)+(s.by_status.drift||0)}</div><div class="l">失败 / 漂移</div></div>
-    <div class="stat"><div class="n">${s.credits_today}</div><div class="l">今日积分</div></div>`;
   $('#today-table').innerHTML=renderRuns(d.runs);
   drawTrend(await api('/api/trend?days=14'));
   let notice='';
@@ -255,6 +256,11 @@ async function loadOverview(){
   if(noCred)notice+=`<div class="banner warn">有 ${noCred} 个启用的账号还没有凭据。到「账号配置」点「配置凭据」添加，可先用「模拟运行」验证流程。</div>`;
   if(!notice)notice='<div class="banner info">一切就绪。凭据加密保存在本机，面板不会显示 token 原文。</div>';
   $('#notice').innerHTML=notice;
+  try{await loadQuota();}catch(e){/* 额度查询失败不阻挡概览 */}
+  if($('#btn-refresh-quota'))$('#btn-refresh-quota').onclick=async()=>{
+    const b=$('#btn-refresh-quota');b.disabled=true;b.textContent='查询中…';
+    try{await loadQuota(true);}catch(e){toast(e.message);}finally{b.disabled=false;b.textContent='刷新额度';}
+  };
 }
 
 function drawTrend(t){
@@ -391,6 +397,35 @@ async function showCredential(acc){
       toast(d.message);closeModal();await loadAccountConfig();await loadOverview();
     }catch(e){toast('删除失败：'+e.message);}
   };
+}
+
+function quotaCell(q){
+  if(!q||!q.ok)return `<span class="qerr" title="${esc((q&&q.reason)||'无法查询')}">${q&&q.reason?esc(q.reason):'暂无数据'}</span>`;
+  const remain=q.remaining??0, total=q.total;
+  const pct=(total&&total>0)?Math.min(100,Math.round(remain/total*100)):null;
+  const bar=pct===null?'':`<div class="qbar"><i style="width:${pct}%"></i></div>`;
+  return `<span class="qnum">${esc(remain)}</span>${total!==null&&total!==undefined?` <span class="meta">/ ${esc(total)}</span>`:''}${bar}`;
+}
+function expiryCell(q){
+  if(!q||!q.ok||!q.expires_at)return '<span class="meta">-</span>';
+  const soon=(()=>{const t=new Date(q.expires_at.replace(' ','T'));return !isNaN(t)&&(t-Date.now())<3*86400000;})();
+  const credits=q.expires_credits!==null&&q.expires_credits!==undefined?`${esc(q.expires_credits)} 积分 `:'';
+  return `<span class="${soon?'qsoon':''}" title="${esc(q.expires_at)}">${credits}${esc(q.expires_at.slice(0,10))} 到期</span>`;
+}
+async function loadQuota(force=false){
+  const box=$('#quota-box');if(!box)return;
+  box.innerHTML='<div class="empty"><span class="spin"></span> 正在查询各平台额度…</div>';
+  try{
+    const d=await api('/api/quota'+(force?'?force=1':''));
+    const rows=(d.items||[]).map(q=>`<tr>
+      <td>${esc(q.account_id)}${q.platform?`<div class="meta">${esc(q.platform)}.${esc(q.version)}</div>`:''}</td>
+      <td>${esc(q.plan||'-')}</td>
+      <td>${quotaCell(q)}</td>
+      <td>${expiryCell(q)}</td>
+      <td class="meta">${q.queried_at?esc(q.queried_at.slice(5,16)):'-'}</td>
+    </tr>`);
+    box.innerHTML=table(['账号','套餐','剩余积分','最近到期','查询时间'],rows);
+  }catch(e){box.innerHTML=`<div class="banner err">额度查询失败：${esc(e.message)}</div>`;}
 }
 
 async function loadAccountConfig(){
@@ -667,7 +702,7 @@ $('#btn-simulate').onclick=()=>runCheckin(true);
 $('#btn-refresh-history').onclick=()=>loadHistory().catch(e=>toast(e.message));
 $('#h-status').onchange=$('#h-platform').onchange=()=>loadHistory().catch(e=>toast(e.message));
 
-const REQUIRED_CAPS=['autofill.workbuddy','autofill.trae','qoder.device','run.simulate_memory_only','autofill.qoder'];
+const REQUIRED_CAPS=['autofill.workbuddy','autofill.trae','qoder.device','run.simulate_memory_only','autofill.qoder','quota.overview'];
 async function checkBackend(){
   try{
     const h=await api('/api/health');

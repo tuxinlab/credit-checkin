@@ -31,9 +31,9 @@ from . import paths
 STATIC_DIR = paths.static_dir()
 
 # 后端能力版本：新增 API/路由时递增，页面用它检测"后端是否为最新代码"
-API_VERSION = "2026-11-19.3"
+API_VERSION = "2026-11-26.1"
 API_CAPS = ["autofill.workbuddy", "autofill.trae", "qoder.device", "schedule.install",
-            "run.simulate_memory_only", "autofill.qoder", "identity.detected", "account.enable_cascades_version", "version.unsupported", "qoder.device_headers", "account.auto_id", "token.refresh", "verify.endpoint", "trend.chart", "account.rename", "config.general", "run.lock"]
+            "run.simulate_memory_only", "autofill.qoder", "identity.detected", "account.enable_cascades_version", "version.unsupported", "qoder.device_headers", "account.auto_id", "token.refresh", "verify.endpoint", "trend.chart", "account.rename", "config.general", "run.lock", "quota.overview"]
 
 
 def default_vault_keys():
@@ -412,6 +412,15 @@ class WebHandler(BaseHTTPRequestHandler):
                     a["device_identity"] = bool(qdev.get("machine_token")) if a["platform"] == "qoder" else None
                 self._send_json({"items": accounts,
                                  "encrypted": self.state.ctx.get("vault_encrypted", False)})
+                return
+            if path == "/api/quota":
+                from .quota import query_quotas
+                qs = urllib.parse.parse_qs(parsed.query)
+                force = str(qs.get("force", ["0"])[0]).lower() in ("1", "true", "yes")
+                items = query_quotas(
+                    self.state.cfg.get("accounts", []), force=force,
+                    allow_local_decrypt=self.state.allow_local_decrypt)
+                self._send_json({"items": [q.to_dict() for q in items]})
                 return
             if path == "/api/guide":
                 qs = urllib.parse.parse_qs(parsed.query)

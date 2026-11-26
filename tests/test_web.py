@@ -47,8 +47,15 @@ class WebTests(unittest.TestCase):
         html = page.read_text(encoding="utf-8")
         for key in ("今日概览", "执行历史", "账号配置", "契约状态", "异常与漂移",
                     "/api/run", "/api/account", "/api/credential", "/api/schedule",
+                    "/api/quota", "账号额度与到期", "btn-refresh-quota", "quota.overview",
                     "第一次使用", "以管理员身份运行", "setup-guide", "schedule-card"):
             self.assertIn(key, html)
+        overview = html.split('<section id="tab-overview">')[1].split('</section>')[0]
+        accounts = html.split('<section id="tab-accounts"')[1].split('</section>')[0]
+        self.assertIn('id="quota-box"', overview, "额度信息应放在今日概览的账号状态卡片里")
+        self.assertNotIn('id="quota-box"', accounts, "账号配置页不应再有单独的额度卡片")
+        self.assertNotIn('id="stats"', html, "概览页顶部的统计卡片应已移除")
+        self.assertNotIn('今日任务', html, "概览页不应再显示统计卡片文案")
 
     def test_overview_shape_and_masking(self):
         with tempfile.TemporaryDirectory() as td:
